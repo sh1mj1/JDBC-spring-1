@@ -841,3 +841,148 @@ public interface DataSource {
 자바는 `DataSource`를 통해 커넥션을 획득하는 방법을 추상화하고 있습니다. 이제 애플리케이션 로직은 `DataSource` 인터페이스에만 의존하면 됩니다. 
 
 덕분에 `DriverManagerDataSource`를 통해서 `DriverManager`를 사용하다가 커넥션 풀을 사용하도록 코드를 변경해도 애플리케이션 로직은 변경하지 않아도 됩니다!!!
+
+
+# 3. DataSource 예제 1. DriverManager
+
+`ConnectionTest` - 드라이버 매니저
+
+```java
+package hello.jdbc.connection;
+
+import lombok.extern.slf4j.Slf4j;
+import org.junit.jupiter.api.Test;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+
+import static hello.jdbc.connection.ConnectionConst.*;
+
+@Slf4j
+public class ConnectionTest {
+    @Test
+    void driverManager() throws SQLException {
+        Connection con1 = DriverManager.getConnection(URL, USERNAME, PASSWORD);
+        Connection con2 = DriverManager.getConnection(URL, USERNAME, PASSWORD);
+        log.info("connection={}, class={}", con1, con1.getClass());
+        log.info("connection={}, class={}", con2, con2.getClass());
+    }
+}
+```
+
+실행 결과
+
+```java
+connection=conn0: 
+	url=jdbc:h2:tcp://localhost/~/test user=SA, 
+	class=class org.h2.jdbc.JdbcConnection
+connection=conn1: 
+	url=jdbc:h2:tcp://localhost/~/test user=SA, 
+	class=class org.h2.jdbc.JdbcConnection
+```
+
+이번에는 스프링이 제공하는 `DataSource`가 적용된 `DriverManager`인 `DriverManagerDataSource`를 사용해봅시다.
+
+`ConnectionTest` - 데이터소스 드라이버 매니저 추가
+
+```java
+package hello.jdbc.connection;
+
+import lombok.extern.slf4j.Slf4j;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+
+import static hello.jdbc.connection.ConnectionConst.*;
+
+@Slf4j
+public class ConnectionTest {
+    @Test
+    void driverManager() throws SQLException {
+        Connection con1 = DriverManager.getConnection(URL, USERNAME, PASSWORD);
+        Connection con2 = DriverManager.getConnection(URL, USERNAME, PASSWORD);
+        log.info("connection={}, class={}", con1, con1.getClass());
+        log.info("connection={}, class={}", con2, con2.getClass());
+    }
+    @Test
+    void dataSourceDriverManager() throws SQLException {
+        // DriverManagerDataSource - 항상 새로운 커넥션 휙득
+        DriverManagerDataSource dataSource = new DriverManagerDataSource(URL, USERNAME, PASSWORD);
+        useDataSource(dataSource);
+    }
+
+    private void useDataSource(DataSource dataSource) throws SQLException {
+        Connection con1 = dataSource.getConnection();
+        Connection con2 = dataSource.getConnection();
+        log.info("connection={}, class={}", con1, con1.getClass());
+        log.info("connection={}, class={}", con2, con2.getClass());
+    }
+}
+```
+
+`dataSourceDriverManager()` - 실행 결과
+
+```java
+DriverManagerDataSource - Creating new JDBC DriverManager Connection to [...]
+DriverManagerDataSource - Creating new JDBC DriverManager Connection to [...]
+connection=conn0: 
+	url=jdbc:h2:tcp://localhost/~/test user=SA, 
+	class=class org.h2.jdbc.JdbcConnection
+connection=conn1: 
+	url=jdbc:h2:tcp://localhost/~/test user=SA, 
+	class=class org.h2.jdbc.JdbcConnection
+```
+
+기존 코드와 비슷하지만 `DriverManagerDataSource`는 `DataSource`를 통해서 커넥션을 획득할 수 있습니다. 참고로 `DriverManagerDataSource`는 스프링이 제공하는 코드입니다.
+
+### **파라미터 차이**
+
+기존 `DriverManager`를 통해서 커넥션을 획득하는 방법과 `DataSource`를 통해서 커넥션을 획득하는 방법에는 큰 차이가 있습니다! 코드를 되짚어 보면서 확인해봅시다.
+
+`DriverManager`
+
+```java
+DriverManager.getConnection(URL, USERNAME, PASSWORD)
+DriverManager.getConnection(URL, USERNAME, PASSWORD)
+```
+
+`DataSource`
+
+```java
+void dataSourceDriverManager() throws SQLException {
+    DriverManagerDataSource dataSource = new DriverManagerDataSource(URL, USERNAME, PASSWORD);
+    useDataSource(dataSource);
+}
+
+private void useDataSource(DataSource dataSource) throws SQLException {
+    Connection con1 = dataSource.getConnection();
+    Connection con2 = dataSource.getConnection();
+    log.info("connection={}, class={}", con1, con1.getClass());
+    log.info("connection={}, class={}", con2, con2.getClass());
+}
+```
+
+`DriverManager`는 커넥션을 획득할 때마다 `URL`, `USERNAME`, `PASSWORD` 같은 파라미터를 계속 전달해야 합니다. 
+
+반면에 `DataSource`를 사용하는 방식은 처음 객체를 생성할 때만 필요한 파리미터를 넘겨두고, 커넥션을 획득할 때는 단순히 `dataSource.getConnection()`만 호출하면 됩니다.
+
+**설정과 사용의 분리**
+
+**설정**: `DataSource`를 만들고 필요한 속성들을 사용해서 `URL`, `USERNAME`, `PASSWORD` 같은 부분을 입력하는 것을 의미합니다. 이렇게 설정과 관련된 속성들은 한 곳에 있는 것이 향후 변경에 더 유연하게 대처할 수 있습니다.
+
+**사용**: 설정은 신경쓰지 않고 `DataSource`의 `getConnection()`만 호출해서 사용하면 됩니다.
+
+이 부분이 작아보이지만 큰 차이를 만들어내는데, 필요한 데이터를 `DataSource`가 만들어지는 시점에 미리 다 넣어두게 되면, `DataSource`를 사용하는 곳에서는 `dataSource.getConnection()`만 호출하면 되므로, `URL`, `USERNAME`, `PASSWORD` 같은 속성들에 의존하지 않아도 됩니다. 
+
+그냥 `DataSource`만 주입받아서 `getConnection()`만 호출하면 되는 것이지요
+
+쉽게 이야기해서 리포지토리(Repository)는 `DataSource`만 의존하고, 이런 속성을 몰라도 됩니다.
+
+애플리케이션을 개발해보면 보통 설정은 한 곳에서 하지만, 사용은 수많은 곳에서 하게 됩니다.
+
+덕분에 객체를 설정하는 부분과 사용하는 부분을 좀 더 명확하게 분리할 수 있습니다.
