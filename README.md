@@ -225,3 +225,189 @@ ORM기술은 SQL 자체를 작성하지 않아도 되어서 개발 생산성이 
 > 중요 이런 기술들도 **내부에서는 모두 JDBC를 사용합니다**. 따라서 JDBC를 직접 사용하지는 않더라도, JDBC가 어떻게 동작하는지 기본 원리를 알아두어야 합니다. 그래야 해당 기술들을 더 깊이있게 이해할 수 있고, 무엇보다 문제가 발생했을 때 근본적인 문제를 찾아서 해결할 수 있습니다. 
 **JDBC는 자바 개발자라면 꼭 알아두어야 하는 필수 기본 기술입니다.**
 >
+이전 글에서 jdbc 커넥션을 얻어서 h2 데이터베이스에 연결했습니다.
+
+이제 JDBC 을 사용하여 `DriverManager` 로 직접 커넥션을 얻어와서 DB 에 쿼리를 날려보는 로직을 만들어볼 것입니다.
+
+# 5. JDBC 개발 - 등록
+
+`schema.sql`
+
+```sql
+drop table member if exists cascade;
+create table member (
+    member_id varchar(10),
+    money integer not null default 0,
+    primary key (member_id)
+);
+```
+
+위처럼 `member` 테이블을 만들어줍니다.
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/228bcb99-91e5-4531-9022-1222d4037af9/Untitled.png)
+
+`Member`
+
+```java
+package hello.jdbc.domain;
+
+import lombok.Data;
+
+@Data
+public class Member {
+    private String memberId;
+    private int money;
+
+    public Member() {
+    }
+
+    public Member(String memberId, int money) {
+        this.memberId = memberId;
+        this.money = money;
+    }
+}
+```
+
+회원의 ID와 해당 회원이 소지한 금액을 표현하는 단순한 클래스입니다. 
+
+앞서 만들어둔 `member` 테이블에 데이터를 저장하고 조회할 때 사용할 것입니다.
+
+`MemberRepositoryV0` - 회원 등록
+
+```java
+package hello.jdbc.repository;
+
+import hello.jdbc.connection.DBConnectionUtil;
+import hello.jdbc.domain.Member;
+import lombok.extern.slf4j.Slf4j;
+
+import java.sql.*;
+
+@Slf4j
+public class MemberRepositoryV0 {
+    public Member save(Member member) throws SQLException {
+        String sql = "insert into member(member_id, money) values (?, ?)";
+
+        Connection con = null;
+        PreparedStatement pstmt = null;
+
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(sql);
+            pstmt.setString(1, member.getMemberId());
+            pstmt.setInt(2, member.getMoney());
+            pstmt.executeUpdate();
+            return member;
+        } catch (SQLException e) {
+            log.error("db error", e);
+            throw e;
+        } finally {
+            close(con, pstmt, null);
+        }
+    }
+
+    private void close(Connection con, Statement stmt, ResultSet rs) {
+        if (rs != null) {
+            try {
+                rs.close();
+            } catch (SQLException e) {
+                log.info("error", e);
+            }
+        }
+
+        if (stmt != null) {
+            try {
+                stmt.close();
+            } catch (SQLException e) {
+                log.info("error", e);
+            }
+        }
+        if (con != null) {
+            try {
+                con.close();
+            } catch (SQLException e) {
+                log.info("error", e);
+            }
+        }
+
+    }
+
+    private Connection getConnection() {
+        return DBConnectionUtil.getConnection();
+    }
+}
+```
+
+커넥션을 얻어 쿼리를 날리는 Repository 입니다.
+
+로직을 요약하면 아래와 같습니다.
+
+커넥션 획득
+
+- `getConnection()`: 이전에 만들어둔 `DBConnectionUtil`를 통해서 데이터베이스 커넥션을 획득
+
+`save()` - SQL 전달
+
+- `sql`: 데이터베이스에 전달할 SQL을 정의함. 여기서는 데이터를 등록해야 하므로 insert sql 을 준비함.
+- `con.prepareStatement(sql)` : 데이터베이스에 전달할 SQL과 파라미터로 전달할 데이터들을 준비
+    - `sql`: `insert into member(member_id, money) values(?, ?)"`
+    - `pstmt.setString(1, member.getMemberId())`: SQL의 첫번째 패러미터인 `?` 에 값을 지정함. 문자이므로 `setString`을 사용함.
+    - `pstmt.setInt(2, member.getMoney())`: SQL의 두번째 패러미터인 `?` 에 값을 지정한다. `Int`형 숫자이므로 `setInt`를 지정함.
+    - `pstmt.executeUpdate()`: `Statement`를 통해 준비된 SQL을 커넥션을 통해 실제 데이터베이스에 전달함. 
+    참고로 `executeUpdate()`은 `int`를 반환하는데 영향받은 DB row 수를 반환함. 여기서는 하나의 row를 등록했으므로 1을 반환
+
+### executeUpdate()
+
+`int executeUpdate() throws SQLException;`
+
+리소스 정리 쿼리를 실행하고 나면 리소스를 정리해야 합니다. 
+
+여기서는 `Connection`, `reparedStatement`를 사용했습니다. 리소스를 정리할 때는 항상 역순으로 해야 합니다. 
+
+`Connection`을 먼저 획득하고 `Connection`을 통해 `PreparedStatement`를 만들었기 때문에 리소스를 반환할 때는 `PreparedStatement`를 먼저 종료하고, 그 다음에 `Connection`을 종료해야 합니다.
+
+> 주의 - 리소스 정리는 꼭! 해주어야 합니다.
+> 
+
+따라서 예외가 발생하든, 하지 않든 항상 수행되어야 하므로 `finally` 구문에 주의해서 작성해야 합니다. 
+
+만약 이 부분을 놓치게 되면 커넥션이 끊어지지 않고 계속 유지되는 문제가 발생할 수 있습니다. 이런 것을 리소스 누수라고 하는데, 결과적으로 커넥션 부족으로 장애가 발생할 수 있습니다.
+
+> 참고 - PreparedStatement 는 Statement 의 자식 타입인데, ? 를 통한 파라미터 바인딩을 가능하게 해줍니다.
+> 
+
+참고로 SQL Injection 공격을 예방하려면 `PreparedStatement` 를 통한 파라미터 바인딩 방식을 사용해야 한다.
+
+`MemberRepositoryV0Test` - 회원 등록
+
+```java
+package hello.jdbc.repository;
+
+import hello.jdbc.domain.Member;
+import org.junit.jupiter.api.Test;
+
+import java.sql.SQLException;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class MemberRepositoryV0Test {
+    MemberRepositoryV0 repository = new MemberRepositoryV0();
+
+    @Test
+    void crud() throws SQLException {
+        // save
+        Member member = new Member("memberV0", 10000);
+        repository.save(member);
+    }
+}
+```
+
+실행 결과 데이터베이스에서 `select * from member` 쿼리를 실행하면 데이터가 저장된 것을 확인할 수 있습니다.
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/f28a395a-4ab9-4c6b-adc9-2e9f7a332726/Untitled.png)
+
+참고로 이 테스트는 2번 실행하면 PK 중복 오류가 발생하므로 `delete from member` 쿼리로 데이터를 삭제한 후에 다시 실행해야 합니다.
+
+PK 중복 오류
+
+`org.h2.jdbc.JdbcSQLIntegrityConstraintViolationException: Unique index`
