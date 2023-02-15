@@ -411,3 +411,146 @@ class MemberRepositoryV0Test {
 PK 중복 오류
 
 `org.h2.jdbc.JdbcSQLIntegrityConstraintViolationException: Unique index`
+
+
+# 6. JDBC 개발 - 조회
+
+이제 조회를 해봅시다.
+
+`MemberRepositoryV0` - 회원 조회 메서드 추가
+
+```java
+...
+public Member findById(String memberId) throws SQLException {
+    String sql = "select * from member where member_id = ?";
+
+    Connection con = null;
+    PreparedStatement pstmt = null;
+    ResultSet rs = null;
+
+    try {
+        con = getConnection();
+        pstmt = con.prepareStatement(sql);
+        pstmt.setString(1, memberId);
+
+        rs = pstmt.executeQuery();
+
+        if (rs.next()) {
+            Member member = new Member();
+            member.setMemberId(rs.getString("member_id"));
+            member.setMoney(rs.getInt("money"));
+            return member;
+        } else {
+            throw new NoSuchElementException("member not found memberId=" + memberId);
+        }
+    } catch (SQLException e) {
+        log.error("db error", e);
+        throw e;
+    } finally {
+        close(con, pstmt, rs);
+    }
+}
+...
+```
+
+`findById()` - 쿼리 실행
+
+- `sql`: 데이터 조회를 위한 select SQL을 준비합니다.
+- `rs = pstmt.executeQuery()` 데이터를 변경할 때는 `executeUpdate()`를 사용하지만, 데이터를 조회할 때는 `executeQuery()`를 사용합니다. `executeQuery()`는 결과를 `ResultSet`에 담아서 반환합니다.
+
+`executeQuery()`
+
+```java
+ResultSet executeQuery() throws SQLException;
+```
+
+`ResultSet`
+
+![https://user-images.githubusercontent.com/52024566/184147645-b7244af0-0692-47d9-8039-7504cbe98358.png](https://user-images.githubusercontent.com/52024566/184147645-b7244af0-0692-47d9-8039-7504cbe98358.png)
+
+- `ResultSet`은 위처럼 생긴 데이터 구조입니다. 보통 select 쿼리의 결과가 순서대로 들어갑니다.
+    - 예를 들어서 `select member_id, money`라고 지정하면 `member_id`, `money`라는 이름으로 데이터가 저장됩니다.
+    - 참고로 `select *`을 사용하면 테이블의 모든 컬럼을 다 지정하는 것입니다.
+
+- `ResultSet` 내부에 있는 커서(`cursor`)를 이동해서 다음 데이터를 조회합니다.
+- `rs.next()`: 이것을 호출하면 커서가 다음으로 이동합니다. 
+참고로 최초의 커서는 데이터를 가리키고 있지 않기 때문에 `rs.next()`를 최초 한번은 호출해야 데이터를 조회할 수 있습니다.
+    - `rs.next()`의 결과가 `true`면 커서의 이동 결과 데이터가 있음.
+    - `rs.next()`의 결과가 `false`면 더 이상 커서가 가리키는 데이터가 없음.
+
+- `rs.getString("member_id")`: 현재 커서가 가리키고 있는 위치의 `member_id` 데이터를 `String` 타입으로 반환합니다.
+- `rs.getInt("money")`: 현재 커서가 가리키고 있는 위치의 `money` 데이터를 `int` 타입으로 반환합니다.
+
+**ResultSet 결과 예시**
+
+![https://user-images.githubusercontent.com/52024566/184147645-b7244af0-0692-47d9-8039-7504cbe98358.png](https://user-images.githubusercontent.com/52024566/184147645-b7244af0-0692-47d9-8039-7504cbe98358.png)
+
+참고로 이 ResultSet 의 결과 예시는 회원이 2명 조회되는 경우입니다.
+
+- `1-1`에서 `rs.next()`를 호출
+- `1-2`의 결과로 `cursor`가 다음으로 이동. 이 경우 `cursor`가 가리키는 데이터가 있으므로 `true`를 반환
+- `2-1`에서 `rs.next()`를 호출
+- `2-2`의 결과로 `cursor`가 다음으로 이동. 이 경우 `cursor`가 가리키는 데이터가 있으므로 `true`를 반환
+- `3-1`에서 `rs.next()`를 호출
+- `3-2`의 결과로 `cursor`가 다음으로 이동. 이 경우 `cursor`가 가리키는 데이터가 없으므로 `false`를 반환
+
+`findById()`에서는 회원 하나를 조회하는 것이 목적입니다. 
+
+따라서 조회 결과가 항상 1건이므로 `while` 대신에 `if`를 사용합니다. 
+
+다음 SQL을 보면 PK인 `member_id`를 항상 지정하는 것을 알 수 있습니다.
+
+```sql
+select * from member where member_id = ?
+```
+
+`MemberRepositoryV0Test` - 회원 조회 추가
+
+```java
+package hello.jdbc.repository;
+
+import hello.jdbc.domain.Member;
+import lombok.extern.slf4j.Slf4j;
+import org.junit.jupiter.api.Test;
+
+import java.sql.SQLException;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@Slf4j
+class MemberRepositoryV0Test {
+    MemberRepositoryV0 repository = new MemberRepositoryV0();
+
+    @Test
+    void crud() throws SQLException {
+        // save
+        Member member = new Member("memberV0", 10000);
+        repository.save(member);
+
+        // findById
+        Member findMember = repository.findById(member.getMemberId());
+        log.info("findMember={}", findMember);
+        assertThat(findMember).isEqualTo(member);
+    }
+}
+```
+
+**실행 결과**
+
+```java
+DBConnectionUtil - get connection=conn0: 
+	url=jdbc:h2:tcp://localhost/~/test user=SA, 
+	class=class org.h2.jdbc.JdbcConnection
+DBConnectionUtil - get connection=conn1: 
+	url=jdbc:h2:tcp://localhost/~/test user=SA, 
+	class=class org.h2.jdbc.JdbcConnection
+MemberRepositoryV0Test - findMember=Member(memberId=memberV0, money=10000)
+```
+
+- 회원을 등록하고 그 결과를 바로 조회해서 확인합니다.
+- 참고로 실행 결과에 `member` 객체의 참조 값이 아니라 실제 데이터가 보이는 이유는 롬복의 `@Data`가 `toString()`을 적절히 오버라이딩 해서 보여주기 때문입니다.
+- `isEqualTo()`: `findMember.equals(member)`를 비교합니다. 결과가 참인 이유는 롬복의 `@Data`는 해당 객체의 모든 필드를 사용하도록 `equals()`를 오버라이딩 하기 때문입니다
+
+> **참고 -** 이 테스트는 2번 실행하면 PK 중복 오류가 발생하므로 `delete from member` 쿼리로 데이터를 삭제한 다음에 다시 실행해야 합니다.
+>
+
