@@ -1497,3 +1497,62 @@ dataSource.setPassword(PASSWORD);
 세션1이 데이터베이스에 반영한 모든 데이터가 처음 상태로 복구됩니다.
 
 수정하거나 삭제한 데이터도 `rollback`을 호출하면 모두 트랜잭션을 시작하기 직전의 상태로 복구됩니다.
+
+# 4. 트랜잭션 - DB 예제2 - 자동 커밋, 수동 커밋
+
+`member` -  예제 스키마
+
+```sql
+drop table member if exists;
+create table member (
+member_id varchar(10),
+money integer not null default 0,
+primary key (member_id)
+);
+```
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/e37cdd7a-0f4a-4e33-8cb7-adbef7c09bf3/Untitled.png)
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/643375ab-6593-40b7-a921-dc37428e294e/Untitled.png)
+
+### 자동 커밋
+
+자동 커밋으로 설정하면 각각의 쿼리 실행 직후에 자동으로 커밋을 호출합니다. 따라서 커밋이나 롤백을 직접 호출하지 않아도 되어 편리합니다. 
+
+하지만 쿼리를 하나하나 실행할 때 마다 자동으로 커밋이 되어버리기 때문에 우리가 원하는 트랜잭션 기능을 제대로 사용할 수 없습니다.
+
+자동 커밋 설정은 아래처럼 작성하면 됩니다.
+
+```sql
+set autocommit true; //자동 커밋 모드 설정
+
+insert into member(member_id, money) values ('data1',10000); //자동 커밋
+insert into member(member_id, money) values ('data2',10000); //자동 커밋
+
+select * from member;
+```
+
+따라서 `commit`, `rollback`을 직접 호출하면서 트랜잭션 기능을 제대로 수행하려면 자동 커밋을 끄고 수동 커밋을 사용해야 합니다.
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/df6d0a2e-ac1c-4b67-888f-c823039f7d36/Untitled.png)
+
+### 수동 커밋
+
+```sql
+set autocommit false; //수동 커밋 모드 설정
+
+insert into member(member_id, money) values ('data3',10000);
+insert into member(member_id, money) values ('data4',10000);
+commit; //수동 커밋
+```
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/3b772632-038a-4a83-b9b4-e950c3f999d5/Untitled.png)
+
+보통 자동 커밋 모드가 기본으로 설정된 경우가 많기 때문에, 수동 커밋 모드로 설정하는 것을 트랜잭션을 시작한다고 표현할 수 있습니다. 
+
+수동 커밋 설정을 하면 이후에 꼭 `commit`, `rollback`을 호출해야 합니다. 
+
+참고로 수동 커밋 모드나 자동 커밋 모드는 한번 설정하면 해당 세션에서는 계속 유지됩니다. 
+
+물론, 중간에 변경하는 것도 가능합니다.
+
