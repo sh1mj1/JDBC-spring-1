@@ -986,3 +986,97 @@ private void useDataSource(DataSource dataSource) throws SQLException {
 애플리케이션을 개발해보면 보통 설정은 한 곳에서 하지만, 사용은 수많은 곳에서 하게 됩니다.
 
 덕분에 객체를 설정하는 부분과 사용하는 부분을 좀 더 명확하게 분리할 수 있습니다.
+
+# 4. DataSource 예제 2. 커넥션 풀
+
+`ConnectionTest` - 데이터소스 커넥션 풀 추가
+
+```java
+import com.zaxxer.hikari.HikariDataSource;
+
+@Test
+void dataSourceConnectionPool() throws SQLException, InterruptedException {
+    //커넥션 풀링: HikariProxyConnection(Proxy) -> JdbcConnection(Target)
+    HikariDataSource dataSource = new HikariDataSource();
+    dataSource.setJdbcUrl(URL);
+    dataSource.setUsername(USERNAME);
+    dataSource.setPassword(PASSWORD);
+    dataSource.setMaximumPoolSize(10);
+    dataSource.setPoolName("MyPool");
+  
+    useDataSource(dataSource);
+    Thread.sleep(1000); //커넥션 풀에서 커넥션 생성 시간 대기
+}
+```
+
+HikariCP 커넥션 풀을 사용합니다. `HikariDataSource`는 `DataSource` 인터페이스를 구현하였습니다.
+
+커넥션 풀 최대 사이즈를 10으로 지정하고, 풀의 이름을 `MyPool` 이라고 지정했습니다.
+
+커넥션 풀에서 커넥션을 생성하는 작업은 애플리케이션 실행 속도에 영향을 주지 않기 위해 별도의 쓰레드에서 작동합니다. 
+
+별도의 쓰레드에서 동작하기 때문에 테스트가 먼저 종료되어 버리므로 예제처럼 `Thread.sleep`을 통해 대기 시간을 주어야 쓰레드 풀에 커넥션이 생성되는 로그를 확인할 수 있습니다.
+
+**실행 결과** (로그 순서는 이해하기 쉽게 약간 수정)
+
+```java
+#커넥션 풀 초기화 정보 출력
+HikariConfig - MyPool - configuration:
+...
+HikariConfig - maximumPoolSize................................10
+HikariConfig - poolName................................"MyPool"
+...
+
+#커넥션 풀 전용 쓰레드가 커넥션 풀에 커넥션을 10개 채움
+[MyPool connection adder] MyPool - Added connection conn0: url=...
+	user=SA
+[MyPool connection adder] MyPool - Added connection conn1: url=...
+	user=SA
+[MyPool connection adder] MyPool - Added connection conn2: url=...
+	user=SA
+[MyPool connection adder] MyPool - Added connection conn3: url=...
+	user=SA
+		...
+[MyPool connection adder] MyPool - Added connection conn9: url=...
+	user=SA
+
+#커넥션 풀에서 커넥션 획득1
+ConnectionTest - connection=HikariProxyConnection@446445803 wrapping conn0:
+	url=... user=SA, 
+	class=class com.zaxxer.hikari.pool.HikariProxyConnection
+#커넥션 풀에서 커넥션 획득2
+ConnectionTest - connection=HikariProxyConnection@832292933 wrapping conn1:
+	url=... user=SA, 
+	class=class com.zaxxer.hikari.pool.HikariProxyConnection
+
+MyPool - After adding stats (total=10, active=2, idle=8, waiting=0)
+```
+
+### **실행 결과 분석**
+
+**HikariConfig** : HikariCP 관련 설정을 확인할 수 있습니다. 풀의 이름(`MyPool`)과 최대 풀 수(`10`)을 확인할 수 있습니다.
+
+**MyPool connection adder** : 별도의 쓰레드 사용해서 커넥션 풀에 커넥션을 채우고 있는 것을 확인할 수 있습니다.
+
+이 쓰레드는 커넥션 풀에 커넥션을 최대 풀 수(`10`)까지 채웁니다. 
+
+> 별도의 쓰레드를 사용해서 커넥션 풀에 커넥션을 채우는 이유는?
+> 
+
+커넥션 풀에 커넥션을 채우는 것은 상대적으로 오래 걸리는 일입니다. 애플리케이션을 실행할 때 커넥션 풀을 채울 때 까지 마냥 대기하고 있다면 애플리케이션 실행 시간이 늦어지겠죠. 따라서 이렇게 별도의 쓰레드를 사용해서 커넥션 풀을 채워야 애플리케이션 실행 시간에 영향을 주지 않습니다.
+
+**커넥션 풀에서 커넥션 획득 :** 커넥션 풀에서 커넥션을 획득하고 그 결과를 출력합니다. 
+
+여기서는 커넥션 풀에서 커넥션을 2개를 획득하고 반환하지는 않습니다. 
+
+따라서 풀에 있는 10개의 커넥션 중에 2개를 가지고 있는 상태입니다. 
+
+그래서 마지막 로그를 보면 사용중인 커넥션 `active=2`, 풀에서 대기 상태인 커넥션 `idle=8`을 확인할 수 있습니다. 
+
+```java
+MyPool - After adding stats (total=10, active=2, idle=8, waiting=0)
+```
+
+> 참고 HikariCP 커넥션 풀에 대한 더 자세한 내용은 다음 공식 사이트를 참고합시다.
+https://github.com/brettwooldridge/HikariCP
+>
