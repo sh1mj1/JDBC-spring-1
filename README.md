@@ -1080,3 +1080,283 @@ MyPool - After adding stats (total=10, active=2, idle=8, waiting=0)
 > 참고 HikariCP 커넥션 풀에 대한 더 자세한 내용은 다음 공식 사이트를 참고합시다.
 https://github.com/brettwooldridge/HikariCP
 >
+
+# 5. DataSource 적용
+
+`MemberRepositoryV1`
+
+```java
+package hello.jdbc.repository;
+
+import hello.jdbc.domain.Member;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.support.JdbcUtils;
+
+import javax.sql.DataSource;
+import java.sql.*;
+import java.util.NoSuchElementException;
+
+/**
+ * JDBC - DataSource 사용, JdbcUtils 사용
+ */
+@Slf4j
+public class MemberRepositoryV1 {
+    private final DataSource dataSource;
+
+    public MemberRepositoryV1(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    public Member save(Member member) throws SQLException {
+        String sql = "insert into member(member_id, money) values (?, ?)";
+
+        Connection con = null;
+        PreparedStatement pstmt = null;
+
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(sql);
+            pstmt.setString(1, member.getMemberId());
+            pstmt.setInt(2, member.getMoney());
+            pstmt.executeUpdate();
+            return member;
+        } catch (SQLException e) {
+            log.error("db error", e);
+            throw e;
+        } finally {
+            close(con, pstmt, null);
+        }
+    }
+
+    public Member findById(String memberId) throws SQLException {
+        String sql = "select * from member where member_id = ?";
+
+        Connection con = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(sql);
+            pstmt.setString(1, memberId);
+
+            rs = pstmt.executeQuery();
+
+            if (rs.next()) {
+                Member member = new Member();
+                member.setMemberId(rs.getString("member_id"));
+                member.setMoney(rs.getInt("money"));
+                return member;
+            } else {
+                throw new NoSuchElementException("member not found memberId=" + memberId);
+            }
+        } catch (SQLException e) {
+            log.error("db error", e);
+            throw e;
+        } finally {
+            close(con, pstmt, rs);
+        }
+    }
+
+    public void update(String memberId, int money) throws SQLException {
+        String sql = "update member set money=? where member_id=?";
+        Connection con = null;
+        PreparedStatement pstmt = null;
+
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(sql);
+            pstmt.setInt(1, money);
+            pstmt.setString(2, memberId);
+            int resultSize = pstmt.executeUpdate();
+            log.info("resultSize={}", resultSize);
+        } catch (SQLException e) {
+            log.error("db error", e);
+            throw e;
+        } finally {
+            close(con, pstmt, null);
+        }
+    }
+
+    public void delete(String memberId) throws SQLException {
+        String sql = "delete from member where member_id=?";
+
+        Connection con = null;
+        PreparedStatement pstmt = null;
+
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(sql);
+            pstmt.setString(1, memberId);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            log.error("db error", e);
+            throw e;
+        } finally {
+            close(con, pstmt, null);
+        }
+    }
+
+    private void close(Connection con, Statement stmt, ResultSet rs) {
+        JdbcUtils.closeResultSet(rs);
+        JdbcUtils.closeStatement(stmt);
+        JdbcUtils.closeConnection(con);
+    }
+
+    private Connection getConnection() throws SQLException {
+        Connection con = dataSource.getConnection();
+        log.info("get connection={}, class={}", con, con.getClass());
+        return con;
+    }
+}
+```
+
+`save`, `findById`, `update`, `delete` 메서드는 이전에 `MemberRepositoryV0` 에서의 메서드와 같습니다.
+
+`DataSource` 의존관계 주입
+
+외부에서 `DataSource`를 주입 받아서 사용합니다.. 이제 직접 만든 `DBConnectionUtil`을 사용하지 않아도 됩니다.
+
+`DataSource`는 표준 인터페이스 이기 때문에 `DriverManagerDataSource`에서 `HikariDataSource`로 변경되어도 해당 코드를 변경하지 않아도 됩니다. 그래서 우리는 4가지 메서드를 변경하지 않은 것입니다.
+
+`JdbcUtils` 편의 메서드
+
+스프링은 JDBC를 편리하게 다룰 수 있는 `JdbcUtils`라는 편의 메서드를 제공합니다.
+
+`JdbcUtils`을 사용하면 커넥션을 좀 더 편리하게 닫을 수 있습니다.
+
+`MemberRepositoryV1Test`
+
+```java
+package hello.jdbc.repository;
+
+import com.zaxxer.hikari.HikariDataSource;
+import hello.jdbc.domain.Member;
+import lombok.extern.slf4j.Slf4j;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.sql.SQLException;
+import java.util.NoSuchElementException;
+
+import static hello.jdbc.connection.ConnectionConst.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
+
+@Slf4j
+public class MemberRepositoryV1Test {
+    MemberRepositoryV1 repository;
+
+    @BeforeEach
+    void beforeEach() throws Exception {
+        // 기본 DriverManager - 항상 새로운 커넥션 휙득
+        // DriverManagerDataSource dataSource = new DriverManagerDataSource(URL, USERNAME, PASSWORD);
+        
+        // 커넥션 풀링: HikariProxyConnection -> JdbcConnection
+        HikariDataSource dataSource = new HikariDataSource();
+        dataSource.setJdbcUrl(URL);
+        dataSource.setUsername(USERNAME);
+        dataSource.setPassword(PASSWORD);
+
+        repository = new MemberRepositoryV1(dataSource);
+    }
+
+    @Test
+    void crud() throws SQLException, InterruptedException {
+        log.info("start");
+
+        //save
+        Member member = new Member("memberV0", 10000);
+        repository.save(member);
+
+        //findById
+        Member memberById = repository.findById(member.getMemberId());
+        assertThat(memberById).isNotNull();
+
+        //update: money: 10000 -> 20000
+        repository.update(member.getMemberId(), 20000);
+        Member updatedMember = repository.findById(member.getMemberId());
+        assertThat(updatedMember.getMoney()).isEqualTo(20000);
+
+        //delete
+        repository.delete(member.getMemberId());
+        assertThatThrownBy(() -> repository.findById(member.getMemberId()))
+                .isInstanceOf(NoSuchElementException.class);
+
+    }
+
+}
+```
+
+`MemberRepositoryV1`은 `DataSource` 의존관계 주입이 필요합니다.
+
+### DriverManagerDataSource 사용
+
+```java
+get connection=conn0: url=jdbc:h2:.. user=SA class=class org.h2.jdbc.JdbcConnection
+get connection=conn1: url=jdbc:h2:.. user=SA class=class org.h2.jdbc.JdbcConnection
+get connection=conn2: url=jdbc:h2:.. user=SA class=class org.h2.jdbc.JdbcConnection
+get connection=conn3: url=jdbc:h2:.. user=SA class=class org.h2.jdbc.JdbcConnection
+get connection=conn4: url=jdbc:h2:.. user=SA class=class org.h2.jdbc.JdbcConnection
+get connection=conn5: url=jdbc:h2:.. user=SA class=class org.h2.jdbc.JdbcConnection
+...
+```
+
+`DriverManagerDataSource`를 사용하면 `conn0~5` 번호를 통해서 항상 새로운 커넥션이 생성되어서 사용되는 것을 확인할 수 있습니다. 
+
+`DriverManagerDataSource` 을 사용하려면 아래처럼 코드를 주석 처리해야 함.
+
+```java
+// 기본 DriverManager - 항상 새로운 커넥션 휙득
+DriverManagerDataSource dataSource = new DriverManagerDataSource(URL, USERNAME, PASSWORD);
+
+// 커넥션 풀링: HikariProxyConnection -> JdbcConnection
+// HikariDataSource dataSource = new HikariDataSource();
+// dataSource.setJdbcUrl(URL);
+// dataSource.setUsername(USERNAME);
+// dataSource.setPassword(PASSWORD);
+```
+
+### **HikariDataSource 사용**
+
+```java
+get connection=HikariProxyConnection@xxxxxxxx1 wrapping conn0: url=jdbc:h2:...
+user=SA
+get connection=HikariProxyConnection@xxxxxxxx2 wrapping conn0: url=jdbc:h2:...
+user=SA
+get connection=HikariProxyConnection@xxxxxxxx3 wrapping conn0: url=jdbc:h2:...
+user=SA
+get connection=HikariProxyConnection@xxxxxxxx4 wrapping conn0: url=jdbc:h2:...
+user=SA
+get connection=HikariProxyConnection@xxxxxxxx5 wrapping conn0: url=jdbc:h2:...
+user=SA
+get connection=HikariProxyConnection@xxxxxxxx6 wrapping conn0: url=jdbc:h2:...
+user=SA
+```
+
+커넥션 풀 사용시 `conn0` 커넥션이 재사용 된 것을 확인할 수 있습니다.
+
+테스트는 순서대로 실행되기 때문에 커넥션을 사용하고 다시 돌려주는 것을 반복하므로 `conn0`만 사용됩니다.
+
+웹 애플리케이션에 동시에 여러 요청이 들어오면 여러 쓰레드에서 커넥션 풀의 커넥션을 다양하게 가져가는 상황을 확인할 수 있습니다.
+
+커넥션 풀 을 사용하려면 아래처럼 코드를 주석 처리해야 함.
+
+```java
+// 기본 DriverManager - 항상 새로운 커넥션 휙득
+// DriverManagerDataSource dataSource = new DriverManagerDataSource(URL, USERNAME, PASSWORD);
+
+// 커넥션 풀링: HikariProxyConnection -> JdbcConnection
+HikariDataSource dataSource = new HikariDataSource();
+dataSource.setJdbcUrl(URL);
+dataSource.setUsername(USERNAME);
+dataSource.setPassword(PASSWORD);
+```
+
+### DI
+
+`DriverManagerDataSource` → `HikariDataSource`로 변경해도 `MemberRepositoryV1`의 코드는 전혀 변경하지 않아도 됩니다. 
+
+`MemberRepositoryV1`는 `DataSource` 인터페이스에만 의존하기 때문입니다. 
+
+이것이 `DataSource`를 사용하는 장점입니다!!! (**DI + OCP**)
