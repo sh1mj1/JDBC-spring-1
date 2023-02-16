@@ -1556,3 +1556,182 @@ commit; //수동 커밋
 
 물론, 중간에 변경하는 것도 가능합니다.
 
+# 5. 트랜잭션 - DB 예제3 - 트랜잭션 실습
+
+### 1. 기본 데이터 입력
+
+우리는 세션을 하나 더 열기 위해서 웹 콘솔 창을 하나 더 열어서 h2 데이터베이스로 실행할 것입니다.
+
+> 주의 - H2 데이터베이스 웹 콘솔 창을 2개 열때 기존 URL을 복사하면 안 됩니다.
+> 
+
+꼭 http://localhost:8082 를 직접 입력해서 완전히 새로운 세션에서 연결하도록 해야 합니다. 
+URL을 복사하면 같은 세션( jsessionId )에서 실행되어서 원하는 결과가 나오지 않을 수 있습니다.
+
+예: http://localhost:8082 에 접근했을 때 다음과 같이 jsessionid 값이 서로 달라야 함. jsessionid 값이 같으면 같은 세션에 접근하는 것임.
+
+예) 1번 URL: [http://localhost:8082/login.do?jsessionid=744cb5cbdfeab7d972e93d08d731b005](http://localhost:8082/login.do?jsessionid=546c1b90ed1f1268e57d427b3731664c)
+
+예) 2번 URL: [http://localhost:8082/login.do?jsessionid=5e297b3dbeaa2383acc1109942bd2a41](http://localhost:8082/login.do?jsessionid=3c18778065d2bc882a74097aeeb219f4)
+
+### 기본 데이터
+
+![https://user-images.githubusercontent.com/52024566/191769670-74ed6eed-50bf-44c1-bbea-441ba7c7c7c5.png](https://user-images.githubusercontent.com/52024566/191769670-74ed6eed-50bf-44c1-bbea-441ba7c7c7c5.png)
+
+**데이터 초기화 SQL**
+
+```sql
+//데이터 초기화
+set autocommit true;
+delete from member;
+insert into member(member_id, money) values ('oldId',10000);
+```
+
+자동 커밋 모드를 사용했기 때문에 별도로 커밋을 호출하지 않아도 됩니다.
+
+> 주의 - 만약 잘 진행되지 않으면 이전에 실행한 특정 세션에서 락을 걸고 있을 수 있습니다. 
+이때는 H2 데이터베이스 서버를 종료하고 다시 실행하면 됩니다.
+> 
+
+데이터를 초기화하고 세션1, 세션2에서 다음 쿼리를 실행해서 결과를 확인해봅시다.
+
+`select * from member;`
+
+세션 1
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/de5b03b6-c0b1-4f77-a39b-fb4ea26b8396/Untitled.png)
+
+세션 2
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/3b45fb45-fb42-456e-a78b-1442eec27822/Untitled.png)
+
+세션 1 과 세션 2 모두 동일하게 조회됩니다.
+
+**세션1 신규 데이터 추가**
+
+![https://user-images.githubusercontent.com/52024566/191769677-64e7c31a-be92-4419-9488-c5a67966a14e.png](https://user-images.githubusercontent.com/52024566/191769677-64e7c31a-be92-4419-9488-c5a67966a14e.png)
+
+**세션1 신규 데이터 추가 SQL**
+
+```sql
+//트랜잭션 시작
+set autocommit false; //수동 커밋 모드
+insert into member(member_id, money) values ('newId1',10000);
+insert into member(member_id, money) values ('newId2',10000);
+
+select * from member;
+```
+
+세션1, 세션2에서 다음 쿼리를 실행해서 결과를 확인해봅니다.
+
+세션 1
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/df0f2d2b-fb65-4dfb-80fd-c88654b87519/Untitled.png)
+
+세션 2
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/fedd3a11-a1ed-4b17-82e6-20b42cde6a7e/Untitled.png)
+
+아직 세션1이 커밋을 하지 않은 상태이기 때문에 세션1에서는 입력한 데이터가 보이지만, 세션2에서는 입력한 데이터가 보이지 않는 것을 확인할 수 있습니다.
+
+### 커밋 - commit
+
+세션1에서 신규 데이터를 입력했는데 아직 커밋은 하지 않았습니다. 이제 커밋해서 데이터베이스에 결과를 반영해봅시다.
+
+**세션1 신규 데이터 추가 후 commit**
+
+![https://user-images.githubusercontent.com/52024566/191769681-6bece174-a580-4ff9-9840-b3758ec996da.png](https://user-images.githubusercontent.com/52024566/191769681-6bece174-a580-4ff9-9840-b3758ec996da.png)
+
+세션1에서 커밋을 호출합시다.
+
+```sql
+commit; //데이터베이스에 반영
+```
+
+세션1, 세션2에서 다음 쿼리를 실행해서 결과를 확인해봅시다.
+
+```sql
+select * from member;
+```
+
+결과를 이미지와 비교하면 같은 결과입니다. 
+
+세션 1
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/aa1e5e99-e55e-4e3c-a333-40524ab4de44/Untitled.png)
+
+세션 2
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/960caafc-e8df-4c7a-a13c-bc2c9b4eda2c/Untitled.png)
+
+세션1이 트랜잭션을 커밋했기 때문에 데이터베이스에 실제 데이터가 반영되었습니다. 커밋 이후에는 모든 세션에서 데이터를 조회할 수 있습니다.
+
+### 롤백 - rollback
+
+**기본 데이터**
+
+![https://user-images.githubusercontent.com/52024566/191769685-b46c07cc-c256-4e75-b566-8bafe7c6e650.png](https://user-images.githubusercontent.com/52024566/191769685-b46c07cc-c256-4e75-b566-8bafe7c6e650.png)
+
+예제를 처음으로 돌리기 위해 데이터를 초기화합시다.
+
+```sql
+//데이터 초기화
+set autocommit true;
+delete from member;
+insert into member(member_id, money) values ('oldId',10000);
+```
+
+**세션1 신규 데이터 추가 후**
+
+![https://user-images.githubusercontent.com/52024566/191769688-f5c0d064-59dd-4adc-b4ef-d843f957baab.png](https://user-images.githubusercontent.com/52024566/191769688-f5c0d064-59dd-4adc-b4ef-d843f957baab.png)
+
+세션1에서 트랜잭션을 시작 상태로 만든 다음에 데이터를 추가합니다.
+
+```sql
+//트랜잭션 시작
+set autocommit false; //수동 커밋 모드
+insert into member(member_id, money) values ('newId1',10000);
+insert into member(member_id, money) values ('newId2',10000);
+```
+
+세션1, 세션2에서 다음 쿼리를 실행해서 결과를 확인해봅시다.
+
+```sql
+select * from member;
+```
+
+세션 1
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/0967dbec-b85d-456f-8721-4ef5c146616e/Untitled.png)
+
+세션 2
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/b3cacdd5-983c-42e0-87d1-0046ad11efec/Untitled.png)
+
+아직 세션1이 커밋을 하지 않은 상태이기 때문에 세션1에서는 입력한 데이터가 보이지만, 세션2에서는 입력한 데이터가 보이지 않는 것을 확인할 수 있습니다.
+
+**세션1 신규 데이터 추가 후 rollback**
+
+![https://user-images.githubusercontent.com/52024566/191769692-f84d9980-3e91-4afd-ba85-8f306b2d0c74.png](https://user-images.githubusercontent.com/52024566/191769692-f84d9980-3e91-4afd-ba85-8f306b2d0c74.png)
+
+세션1에서 롤백을 호출합니다.
+
+```sql
+rollback; //롤백으로 데이터베이스에 변경 사항을 반영하지 않는다.
+```
+
+세션1, 세션2에서 다음 쿼리를 실행해서 결과를 확인합니다.
+
+```sql
+select * from member;
+```
+
+세션 1
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/f26f5732-c140-4b32-9fdc-20acf8ebc563/Untitled.png)
+
+세션 2
+
+![Untitled](https://s3-us-west-2.amazonaws.com/secure.notion-static.com/681105a6-235d-4e5e-995d-c88420205dc7/Untitled.png)
+
+롤백으로 데이터가 DB에 반영되지 않은 것을 확인할 수 있습니다.
