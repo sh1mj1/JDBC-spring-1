@@ -2063,3 +2063,203 @@ update member set money=500 where member_id = 'memberA';
 `commit;`
 
 트랜잭션과 락은 데이터베이스마다 실제 동작하는 방식이 조금씩 다르기 때문에, 해당 데이터베이스 메뉴얼을 확인해보고, 의도한대로 동작하는지 테스트한 이후에 사용하면 됩니다.
+
+
+# 10. 트랜잭션 - 적용1
+
+이제 직접 프로젝트에 로직을 구현하면서 트랜잭션, 락을 적용해봅시다.
+
+### **비즈니스 로직 구현**
+
+`MemberServiceV1`
+
+```java
+package hello.jdbc.service;
+
+import hello.jdbc.domain.Member;
+import hello.jdbc.repository.MemberRepositoryV1;
+import lombok.RequiredArgsConstructor;
+
+import java.sql.SQLException;
+
+@RequiredArgsConstructor
+public class MemberServiceV1 {
+    private final MemberRepositoryV1 memberRepository;
+
+    public void accountTransfer(String fromId, String toId, int money) throws SQLException {
+        Member fromMember = memberRepository.findById(fromId);
+        Member toMember = memberRepository.findById(toId);
+
+        memberRepository.update(fromId, fromMember.getMoney() - money);
+        validation(toMember);
+        memberRepository.update(toId, toMember.getMoney() + money);
+    }
+
+    private void validation(Member toMember) {
+        if (toMember.getMemberId().equals("ex")) {
+            throw new IllegalStateException("이체 중 예외 발생!!");
+        }
+    }
+}
+```
+
+- `fromId`의 회원을 조회해서 `toId`의 회원에게 `money`만큼의 돈을 계좌이체 하는 로직입니다.
+    - `fromId` 회원의 돈을 `money`만큼 감소하는 것은 `MemberRepositoryV1` 클래스에서 구현해 놓은 update 메서드를 통해 UPDATE SQL 실행
+    - `toId` 회원의 돈을 `money`만큼 증가하는 것은 `MemberRepositoryV1` 클래스에서 구현해 놓은 update 메서드를 통해 UPDATE SQL 실행
+
+- 예외 상황을 테스트해보기 위해 `toId`가 `"ex"`인 경우 예외가 발생하도록 만들어 두었습니다.
+
+`MemberServiceV1Test`
+
+```java
+package hello.jdbc.service;
+
+import hello.jdbc.domain.Member;
+import hello.jdbc.repository.MemberRepositoryV1;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+
+import java.sql.SQLException;
+
+import static hello.jdbc.connection.ConnectionConst.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * 기본 동작, 트랜잭션이 없어서 문제 발생
+ */
+class MemberServiceV1Test {
+    public static final String MEMBER_A = "memberA";
+    public static final String MEMBER_B = "memberB";
+    public static final String MEMBER_EX = "ex";
+
+    private MemberRepositoryV1 memberRepository;
+    private MemberServiceV1 memberService;
+
+    @BeforeEach
+    void before() {
+        DriverManagerDataSource dataSource = new DriverManagerDataSource(URL, USERNAME, PASSWORD);
+        memberRepository = new MemberRepositoryV1(dataSource);
+        memberService = new MemberServiceV1(memberRepository);
+    }
+
+    @AfterEach
+    void after() throws SQLException {
+        memberRepository.delete(MEMBER_A);
+        memberRepository.delete(MEMBER_B);
+        memberRepository.delete(MEMBER_EX);
+    }
+
+    @Test
+    @DisplayName("정상 이체")
+    void accountTransfer() throws SQLException {
+        // given
+        Member memberA = new Member(MEMBER_A, 10000);
+        Member memberB = new Member(MEMBER_B, 10000);
+        memberRepository.save(memberA);
+        memberRepository.save(memberB);
+
+        // when
+				memberService.accountTransfer(memberA.getMemberId(), memberB.getMemberId(), 2000);
+
+        // then
+        Member findMemberA = memberRepository.findById(memberA.getMemberId());
+        Member findMemberB = memberRepository.findById(memberB.getMemberId());
+
+        assertThat(findMemberA.getMoney()).isEqualTo(8000);
+        assertThat(findMemberB.getMoney()).isEqualTo(12000);
+    }
+
+    @Test
+    @DisplayName("이체 중에 예외 발생")
+    void accountTransferEx() throws SQLException {
+        //given
+        Member memberA = new Member(MEMBER_A, 10000);
+        Member memberEx = new Member(MEMBER_EX, 10000);
+        memberRepository.save(memberA);
+        memberRepository.save(memberEx);
+
+        //when
+        assertThatThrownBy(() -> memberService.accountTransfer(memberA.getMemberId(), memberEx.getMemberId(), 2000)).isInstanceOf(IllegalStateException.class);
+
+        // then
+        Member findMemberA = memberRepository.findById(memberA.getMemberId());
+        Member findMemberEx = memberRepository.findById(memberEx.getMemberId());
+
+        // memberA 의 돈만 2000 원 줄고 ex 의 돈은 그대로 10000 원인 예외 발생
+        assertThat(findMemberA.getMoney()).isEqualTo(8000);
+        assertThat(findMemberEx.getMoney()).isEqualTo(10000);
+    }
+
+}
+```
+
+**주의 -** 테스트를 수행하기 전에 아래 SLQ 문을 통해 데이터베이스의 데이터를 삭제해야 합니다.
+
+```sql
+delete from member;
+```
+
+정상이체 - `accountTransfer()`
+
+- given: 다음 데이터를 저장해서 테스트를 준비
+    - `memberA` 10000원
+    - `memberB` 10000원
+
+- when: 계좌이체 로직을 실행
+    - `memberService.accountTransfer()`를 실행
+    - `memberA` → `memberB`로 2000원 계좌이체
+        - `memberA`의 금액이 2000원 감소
+        - `memberB`의 금액이 2000원 증가
+
+- then: 계좌이체가 정상 수행되었는지 검증
+    - `memberA` 8000원 - 2000원 감소
+    - `memberB` 12000원 - 2000원 증가
+
+테스트 결과 정상이체 로직이 정상 수행되는 것을 확인할 수 있습니다.
+
+**테스트 데이터 제거** 
+
+테스트가 끝나면 다음 테스트에 영향을 주지 않기 위해 `@AfterEach`에서 테스트에 사용한 데이터를 모두 삭제하고 있습니다.
+
+- `@BeforeEach`: 각각의 테스트가 수행되기 전에 실행
+- `@AfterEach`: 각각의 테스트가 실행되고 난 이후에 실행
+
+`@AfterEach`
+
+```java
+void after() throws SQLException {
+memberRepository.delete(MEMBER_A);
+memberRepository.delete(MEMBER_B);
+memberRepository.delete(MEMBER_EX);
+}
+```
+
+- 테스트 데이터를 제거하는 과정이 불편하지만, 다음 테스트에 영향을 주지 않으려면 테스트에서 사용한 데이터를 모두 제거해야 합니다. 그렇지 않으면 이번 테스트에서 사용한 데이터 때문에 다음 테스트에서 데이터 중복으로 오류가 발생할 수 있습니다
+- 테스트에서 사용한 데이터를 제거하는 더 나은 방법으로는 트랜잭션을 활용할 수 있습니다. 테스트 전에 트랜잭션을 시작하고, 테스트 이후에 트랜잭션을 롤백해버리면 데이터가 처음 상태로 돌아오게 됩니다.
+
+이체중 예외 발생 - `accountTransferEx()`
+
+- given: 다음 데이터를 저장해서 테스트를 준비
+    - `memberA` 10000원
+    - `memberEx` 10000원
+
+- when: 계좌이체 로직을 실행
+    - `memberService.accountTransfer()`를 실행
+    - `memberA` → `memberEx`로 2000원 계좌이체
+        - `memberA`의 금액이 2000원 감소
+        - `memberEx` 회원의 ID는 `ex`이므로 중간에 예외가 발생
+
+- then: 계좌이체는 실패. memberA 의 돈만 2000원 감소
+    - `memberA` 8000원 - 2000원 감소
+    - `memberB` 10000원 - 중간에 실패로 로직이 수행되지 않았으므로 그대로 10000원으로 남아있음
+
+### **정리**
+
+이체중 예외가 발생하게 되면 `memberA`의 금액은 10000원 → 8000원으로 2000원 감소합니다. 
+
+그런데 `memberB`의 돈은 그대로 10000원으로 그대로 유지됩니다. 결과적으로 `memberA`의 돈만 2000원 감소되는 심각한 오류(예외)가 발생합니다.
