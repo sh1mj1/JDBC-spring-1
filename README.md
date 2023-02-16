@@ -1935,3 +1935,66 @@ select * from member;
 **오토 커밋 :** 만약 오토 커밋 모드로 동작하는데, 계좌이체 중간에 실패하면 어떻게 할까요? 쿼리를 하나 실행할 때마다 바로바로 커밋이 되어버리기 때문에 `memberA`의 돈만 2000원 줄어드는 심각한 문제가 발생하게 됩니다.
 
 **트랜잭션 시작:** 따라서 이런 종류의 작업은 꼭 수동 커밋 모드를 사용해서 수동으로 커밋과 롤백을 할 수 있도록 해야 합니다. 보통 이렇게 자동 커밋 모드에서 수동 커밋 모드로 전환 하는 것을 트랜잭션을 시작한다고 표현합니다
+
+# 7. DB 락 - 개념 이해
+
+### **개념 이해**
+
+세션1이 트랜잭션을 시작하고 데이터를 수정하는 동안 아직 커밋을 수행하지 않았는데, 세션2에서 동시에 같은 데이터를 수정하게 되면 여러가지 문제가 발생합니다. 
+
+트랜잭션의 원자성이 깨지고 여기에 더해서 세션1이 중간에 롤백을 하게 되면 세션2는 잘못된 데이터를 수정하는 문제가 발생합니다.
+
+이런 문제를 방지하려면, 당연히 세션이 트랜잭션을 시작하고 데이터를 수정하는 동안에는 커밋이나 롤백 전까지 다른 세션에서 해당 데이터를 수정할 수 없게 막아야 합니다.
+
+**락0**
+
+![https://user-images.githubusercontent.com/52024566/192289770-403240a0-373c-4f6b-b7e9-f73886cfbcf6.png](https://user-images.githubusercontent.com/52024566/192289770-403240a0-373c-4f6b-b7e9-f73886cfbcf6.png)
+
+- 현재 세션1은 `memberA`의 금액을 500원으로 변경하고 싶고, 세션2는 같은 `memberA`의 금액을 1000원으로 변경하고 싶습니다.
+- 데이터베이스는 이런 문제를 해결하기 위해 락(Lock)이라는 개념을 제공합니다.
+
+**락1**
+
+![https://user-images.githubusercontent.com/52024566/192289777-02459a65-ab83-46e6-9932-8218eace04f5.png](https://user-images.githubusercontent.com/52024566/192289777-02459a65-ab83-46e6-9932-8218eace04f5.png)
+
+ 1. 세션1은 트랜잭션을 시작합니다.
+
+ 2. 그리고 세션1은 `memberA`의 `money`를 500으로 변경을 시도합니다. 이 때 해당 row의 락을 먼저 획득해야 합니다. 해당 row의 락이 남아 있으므로 세션1은 락을 획득합니다.. (세션1이 세션2보다 조금 더 빨리 요청한 상황입니다.)
+
+ 3. 세션1은 락을 획득했으므로 해당 로우에 update sql을 수행합니다.
+
+**락2**
+
+![https://user-images.githubusercontent.com/52024566/192289782-e2a114b6-1b88-4767-9f14-b885464c185a.png](https://user-images.githubusercontent.com/52024566/192289782-e2a114b6-1b88-4767-9f14-b885464c185a.png)
+
+ 4. 그리고 세션2는 트랜잭션을 시작합니다.
+
+ 5. 세션2도 `memberA`의 `money` 데이터를 변경하려고 시도합니다. 이 때도 해당 로우의 락을 먼저 획득해야 하는데 락이 없으므로 락이 돌아올 때 까지 대기합니다.
+
+(참고로 세션2가 락을 무한정 대기하는 것은 아닙니다. 락 대기 시간을 넘어가면 락 타임아웃 오류가 발생하게 됩니다. 락 대기 시간은 설정할 수 있습니다.)
+
+**락3**
+
+![https://user-images.githubusercontent.com/52024566/192289785-befdabb5-e5d6-427e-a405-01ac4988fc79.png](https://user-images.githubusercontent.com/52024566/192289785-befdabb5-e5d6-427e-a405-01ac4988fc79.png)
+
+ 6. 세션1은 커밋을 수행합니다. 커밋으로 트랜잭션이 종료되었으므로 락도 반납합니다.
+
+**락4**
+
+![https://user-images.githubusercontent.com/52024566/192289789-32005637-61f9-48dc-a70a-bbdf64e9e565.png](https://user-images.githubusercontent.com/52024566/192289789-32005637-61f9-48dc-a70a-bbdf64e9e565.png)
+
+ 7. 락을 획득하기 위해 대기하던 세션2가 락을 확득합니다.
+
+**락5**
+
+![https://user-images.githubusercontent.com/52024566/192289792-fbed62a5-bffc-4752-a0e9-780c7e9b1620.png](https://user-images.githubusercontent.com/52024566/192289792-fbed62a5-bffc-4752-a0e9-780c7e9b1620.png)
+
+ 8. 세션2는 update sql을 수행합니다.
+
+**락6**
+
+![https://user-images.githubusercontent.com/52024566/192289794-3dc94ea0-7179-4753-a110-548d1ffd39e2.png](https://user-images.githubusercontent.com/52024566/192289794-3dc94ea0-7179-4753-a110-548d1ffd39e2.png)
+
+ 9. 세션2는 커밋을 수행하고 트랜잭션이 종료되었으므로 락을 반납합니다.
+
+이렇게 예시를 통해서 락(Lock) 이 무엇인지 알아보았습니다.
