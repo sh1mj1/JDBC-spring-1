@@ -2297,19 +2297,20 @@ import javax.sql.DataSource;
 import java.sql.*;
 import java.util.NoSuchElementException;
 
-/**
- * JDBC - DataSource 사용, JdbcUtils 사용
- */
 @Slf4j
-public class MemberRepositoryV1 {
+/**
+ * JDBC - ConnectionParam
+ */
+public class MemberRepositoryV2 {
+
     private final DataSource dataSource;
 
-    public MemberRepositoryV1(DataSource dataSource) {
+    public MemberRepositoryV2(DataSource dataSource) {
         this.dataSource = dataSource;
     }
 
     public Member save(Member member) throws SQLException {
-        String sql = "insert into member(member_id, money) values (?, ?)";
+        String sql = "insert into member(member_id, money) values(?, ?)";
 
         Connection con = null;
         PreparedStatement pstmt = null;
@@ -2351,6 +2352,7 @@ public class MemberRepositoryV1 {
             } else {
                 throw new NoSuchElementException("member not found memberId=" + memberId);
             }
+
         } catch (SQLException e) {
             log.error("db error", e);
             throw e;
@@ -2360,7 +2362,7 @@ public class MemberRepositoryV1 {
     }
 
     public Member findById(Connection con, String memberId) throws SQLException {
-        String sql = "select * from member where member_id=?";
+        String sql = "select * from member where member_id = ?";
 
         PreparedStatement pstmt = null;
         ResultSet rs = null;
@@ -2382,14 +2384,16 @@ public class MemberRepositoryV1 {
             log.error("db error", e);
             throw e;
         } finally {
-            // connection 을 여기서 닫지 않고 서비스 계층에서 닫아야 함..
+            //connection은 여기서 닫지 않는다.
             JdbcUtils.closeResultSet(rs);
             JdbcUtils.closeStatement(pstmt);
         }
     }
 
     public void update(String memberId, int money) throws SQLException {
+
         String sql = "update member set money=? where member_id=?";
+
         Connection con = null;
         PreparedStatement pstmt = null;
 
@@ -2398,8 +2402,7 @@ public class MemberRepositoryV1 {
             pstmt = con.prepareStatement(sql);
             pstmt.setInt(1, money);
             pstmt.setString(2, memberId);
-            int resultSize = pstmt.executeUpdate();
-            log.info("resultSize={}", resultSize);
+            pstmt.executeUpdate();
         } catch (SQLException e) {
             log.error("db error", e);
             throw e;
@@ -2409,7 +2412,9 @@ public class MemberRepositoryV1 {
     }
 
     public void update(Connection con, String memberId, int money) throws SQLException {
+
         String sql = "update member set money=? where member_id=?";
+
         PreparedStatement pstmt = null;
 
         try {
@@ -2421,12 +2426,13 @@ public class MemberRepositoryV1 {
             log.error("db error", e);
             throw e;
         } finally {
-            // connection 은 여기서 닫지 않고 서비스 계층에서 닫아야 함.
-            close(con, pstmt, null);
+            //connection은 여기서 닫지 않는다.
+            JdbcUtils.closeStatement(pstmt);
         }
     }
 
     public void delete(String memberId) throws SQLException {
+
         String sql = "delete from member where member_id=?";
 
         Connection con = null;
@@ -2453,7 +2459,7 @@ public class MemberRepositoryV1 {
 
     private Connection getConnection() throws SQLException {
         Connection con = dataSource.getConnection();
-        log.info("get connection={}, class={}", con, con.getClass());
+        log.info("get connection={} class={}", con, con.getClass());
         return con;
     }
 }
@@ -2514,12 +2520,12 @@ public class MemberServiceV2 {
 
         memberRepository.update(con, fromId, fromMember.getMoney() - money);
         validation(toMember);
-        memberRepository.update(con, fromId, fromMember.getMoney() - money);
+        memberRepository.update(con, toId, toMember.getMoney() + money);
     }
 
     private void validation(Member toMember) {
         if (toMember.getMemberId().equals("ex")) {
-            throw new IllegalStateException("이체 중 예외 발생")
+            throw new IllegalStateException("이체 중 예외 발생");
         }
     }
 
