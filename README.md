@@ -3996,3 +3996,153 @@ memberRepository class=class hello.jdbc.repository.MemberRepositoryV3
 스프링이 제공하는 선언적 트랜잭션 관리 덕분에 드디어 트랜잭션 관련 코드를 순수한 비즈니스 로직에서 제거할 수 있습니다.
 
 결론적으로 개발자는 트랜잭션이 필요한 곳에 `@Transactional` 애노테이션 하나만 추가하면 됩니다!! 나머지는 스프링 트랜잭션 AOP가 자동으로 처리해줍니다.
+
+# 10. 스프링 부트의 자동 리소스 등록
+
+### **데이터소스와 트랜잭션 매니저를 스프링 빈으로 직접 등록**
+
+```java
+@Bean
+DataSource dataSource() {
+    return new DriverManagerDataSource(URL, USERNAME, PASSWORD);
+}
+
+@Bean
+PlatformTransactionManager transactionManager() {
+    return new DataSourceTransactionManager(dataSource());
+}
+```
+
+우리는 위에 8, 9 챕터에서 이렇게 데이터소스와 트랜잭션 매니저를 직접 스프링 빈으로 등록해야 했으나 스프링 부트가 나오면서 여기서도 많은 부분이 자동화할 수 있게 되었습니다. (더 오래전에 스프링을 다루어왔다면 해당 부분을 주로 XML로 등록하고 관리)
+
+### **데이터소스 - 자동 등록**
+
+스프링 부트는 데이터소스(`DataSource`)를 스프링 빈에 자동으로 등록합니다.
+
+- 자동으로 등록되는 스프링 빈 이름: `dataSource`
+
+참고로 개발자가 직접 데이터소스를 빈으로 등록하면 스프링 부트는 데이터소스를 자동으로 등록하지 않습니다.
+
+스프링 부트는 다음과 같이 `application.properties`에 있는 속성을 사용해서 `DataSource`를 생성하고 스프링 빈에 등록합니다.
+
+`application.properties`
+
+```java
+spring.datasource.url=jdbc:h2:tcp://localhost/~/test
+spring.datasource.username=sa
+spring.datasource.password=
+```
+
+스프링 부트가 기본으로 생성하는 데이터소스는 커넥션풀을 제공하는 `HikariDataSource` 커넥션풀과 관련된 설정도 `application.properties`를 통해서 지정할 수 있습니다.
+
+만약 `spring.datasource.url` 속성이 없으면 스프링부트는 내장 데이터베이스(메모리 DB)를 생성을 시도합니다.
+
+### **트랜잭션 매니저 - 자동 등록**
+
+스프링 부트는 적절한 트랜잭션 매니저(`PlatformTransactionManager`)를 자동으로 스프링 빈에 등록합니다.
+
+- 자동으로 등록되는 스프링 빈 이름: `transactionManager`
+
+참고로 개발자가 직접 트랜잭션 매니저를 빈으로 등록하면 스프링 부트는 트랜잭션 매니저를 자동으로 등록하지 않습니다. (데이터소스 자동 등록과 같죠!)
+
+어떤 트랜잭션 매니저를 선택할지는 현재 등록된 라이브러리를 보고 판단합니다. 
+
+만약 JDBC를 사용하면 `DataSourceTransactionManager`를 빈으로 등록하고, JPA를 사용하면 `JpaTransactionManager`를 빈으로 등록하는 것이지요. 
+
+만약에 둘다 사용하는 경우 `JpaTransactionManager`를 등록합니다. 
+
+참고로 `JpaTransactionManager`는 `DataSourceTransactionManager`가 제공하는 기능도 대부분 지원합니다!
+
+**데이터소스, 트랜잭션 매니저 직접 등록**
+
+```java
+@TestConfiguration
+static class TestConfig {
+    @Bean
+    DataSource dataSource() {
+        return new DriverManagerDataSource(URL, USERNAME, PASSWORD);
+    }
+  
+    @Bean
+    PlatformTransactionManager transactionManager() {
+        return new DataSourceTransactionManager(dataSource());
+    }
+  
+    @Bean
+    MemberRepositoryV3 memberRepositoryV3() {
+        return new MemberRepositoryV3(dataSource());
+    }
+  
+    @Bean
+    MemberServiceV3_3 memberServiceV3_3() {
+        return new MemberServiceV3_3(memberRepositoryV3());
+    }
+}
+```
+
+- 이렇게 데이터소스와 트랜잭션 매니저를 직접 등록하면 스프링 부트는 데이터소스와 트랜잭션 매니저를 자동으로 등록하지 않음
+
+## **데이터소스와 트랜잭션 매니저 자동 등록**
+
+`application.properties`
+
+```java
+spring.datasource.url=jdbc:h2:tcp://localhost/~/test
+spring.datasource.username=sa
+spring.datasource.password=
+```
+
+`MemberServiceV3_4Test`
+
+```java
+/**
+* 트랜잭션 - DataSource, transactionManager 자동 등록
+*/
+@Slf4j
+@SpringBootTest
+class MemberServiceV3_4Test {
+		public static final String MEMBER_A = "memberA";
+		...
+  
+    @TestConfiguration
+    static class TestConfig {
+      
+        private final DataSource dataSource;
+      
+        public TestConfig(DataSource dataSource) {
+            this.dataSource = dataSource;
+        }
+      
+        @Bean
+        MemberRepositoryV3 memberRepositoryV3() {
+            return new MemberRepositoryV3(dataSource);
+        }
+      
+        @Bean
+        MemberServiceV3_3 memberServiceV3_3() {
+            return new MemberServiceV3_3(memberRepositoryV3());
+        }
+    }
+    ...
+}
+```
+
+기존(`MemberServiceV3_3Test`)과 같은 코드이고 `TestConfig` 부분만 다릅니다.
+
+데이터소스와 트랜잭션 매니저를 스프링 빈으로 등록하는 코드가 생략되어 있습니다. 따라서 스프링 부트가 `application.properties`에 지정된 속성을 참고해서 데이터소스와 트랜잭션 매니저를 자동으로 생성합니다
+
+코드에서 보는 것 처럼 생성자를 통해서 스프링 부트가 만들어준 데이터소스 빈을 주입 받을 수도 있습니다.
+
+### **정리**
+
+데이터소스와 트랜잭션 매니저는 스프링 부트가 제공하는 자동 빈 등록 기능을 사용하는 것이 편리합니다.
+
+추가로 `application.properties`를 통해 설정도 편리하게 할 수 있습니다.
+
+> 스프링 부트의 데이터소스 자동 등록에 대한 더 자세한 내용은 다음 스프링 부트 공식 메뉴얼을 참고합시다.
+https://docs.spring.io/spring-boot/docs/current/reference/html/data.html#data.sql.datasource.production
+> 
+> 
+> 자세한 설정 속성은 다음을 참고합시다. 
+> https://docs.spring.io/spring-boot/docs/current/reference/html/applicationproperties.html
+>
