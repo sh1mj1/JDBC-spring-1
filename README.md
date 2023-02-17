@@ -4170,4 +4170,33 @@ https://docs.spring.io/spring-boot/docs/current/reference/html/data.html#data.sq
     - `RuntimeException`과 그 자식 예외는 모두 언체크 예외입니다.
     - `RuntimeException`의 이름을 따라서 `RuntimeException`과 그 하위 언체크 예외를 런타임 예외라고 합니다.
 
-    
+
+# 2. 예외 기본 규칙
+
+예외는 폭탄 돌리기라고 생각하면 됩니다!! 잡아서 처리하거나, 처리할 수 없으면 밖으로 던져야 합니다.
+
+### **예외 처리**
+
+![https://user-images.githubusercontent.com/52024566/195851248-303e30e8-fc71-43f9-9264-ffad354d802b.png](https://user-images.githubusercontent.com/52024566/195851248-303e30e8-fc71-43f9-9264-ffad354d802b.png)
+
+- 5번에서 예외를 처리하면 이후에는 애플리케이션 로직이 정상 흐름으로 동작합니다.
+
+### **예외 던짐**
+
+![https://user-images.githubusercontent.com/52024566/195851253-8668f9d1-8750-4965-818a-a8da4750120a.png](https://user-images.githubusercontent.com/52024566/195851253-8668f9d1-8750-4965-818a-a8da4750120a.png)
+
+예외를 처리하지 못하면 호출한 곳으로 예외를 계속 던집니다.
+
+**예외의 2가지 기본 규칙**
+
+ 1. 예외는 잡아서 처리하거나 던져야 합니다.
+
+ 2. 예외를 잡거나 던질 때 지정한 예외 뿐만 아니라 그 예외의 자식들도 함께 처리됩니다.
+
+- 예를 들어서 `Exception`을 `catch`로 잡으면 그 하위 예외들도 모두 잡을 수 있음
+- 예를 들어서 `Exception`을 `throws`로 던지면 그 하위 예외들도 모두 던질 수 있음
+
+> **참고: 예외를 처리하지 못하고 계속 던지면 어떻게 될까요?**
+> 
+- 자바 `main()` 쓰레드의 경우 예외 로그를 출력하면서 시스템이 종료됩니다.
+- 웹 애플리케이션의 경우 여러 사용자의 요청을 처리하기 때문에 하나의 예외 때문에 당연히 시스템이 종료되면 안 됩니다 . WAS가 해당 예외를 받아서 처리하는데, 주로 사용자에게 개발자가 지정한 오류 페이지를 보여줍니다.
