@@ -4432,3 +4432,135 @@ public void callThrow() throws Exception {
 
 - 장점: 개발자가 실수로 예외를 누락하지 않도록 컴파일러를 통해 문제를 잡아주는 훌륭한 안전 장치가 됨.
 - 단점: 하지만 실제로는 개발자가 모든 체크 예외를 반드시 잡거나 던지도록 처리해야 하기 때문에, 너무 번거로운 일이 됨. 크게 신경쓰고 싶지 않은 예외까지 모두 챙겨야 함. 추가로 의존관계에 따른 단점도 있음.
+
+# 4. 언체크 예외 기본 이해
+
+`RuntimeException`과 그 하위 예외는 언체크 예외로 분류됩니다.
+
+언체크 예외는 말 그대로 컴파일러가 예외를 체크하지 않는다는 뜻입니다.
+
+언체크 예외는 체크 예외와 기본적으로 동일하나 차이가 있다면 예외를 던지는 `throws`를 선언하지 않고 생략할 수 있습니다. 이 경우 자동으로 예외를 던집니다.
+
+### **체크 예외 VS 언체크 예외**
+
+- 체크 예외: 예외를 잡아서 처리하지 않으면 항상 `throws`에 던지는 예외를 선언해야 합니다.
+- 언체크 예외: 예외를 잡아서 처리하지 않아도 `throws`를 생략할 수 있습니다.
+
+### **언체크 예외 전체 코드**
+
+```java
+package hello.jdbc.exception;
+
+import lombok.extern.slf4j.Slf4j;
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+@Slf4j
+public class UncheckedTest {
+
+    @Test
+    void unchecked_catch() {
+        Service service = new Service();
+        service.callCatch();
+    }
+
+    @Test
+    void unchecked_throw() {
+        Service service = new Service();
+        assertThatThrownBy(() -> service.callThrow())
+                .isInstanceOf(MyUncheckedException.class);
+    }
+
+    /**
+     * RuntimeException을 상속받은 예외는 언체크 예외가 된다.
+     */
+    static class MyUncheckedException extends RuntimeException {
+        public MyUncheckedException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * UnChecked 예외는
+     * 예외를 잡거나, 던지지 않아도 된다.
+     * 예외를 잡지 않으면 자동으로 밖으로 던진다.
+     */
+    static class Service {
+
+        Repository repository = new Repository();
+
+        /**
+         * 필요한 경우 예외를 잡아서 처리하면 된다.
+         */
+        public void callCatch() {
+            try {
+                repository.call();
+            } catch (MyUncheckedException e) {
+                //예외 처리 로직
+                log.info("예외 처리, message={}", e.getMessage(), e);
+            }
+        }
+
+        /**
+         * 예외를 잡지 않아도 된다. 자연스럽게 상위로 넘어간다.
+         * 체크 예외와 다르게 throws 예외 선언을 하지 않아도 된다.
+         */
+        public void callThrow() {
+            repository.call();
+        }
+    }
+
+    static class Repository {
+        public void call() {
+            throw new MyUncheckedException("ex");
+        }
+    }
+}
+```
+
+**언체크 예외를 잡아서 처리하는 코드**
+
+```java
+try {
+    repository.call();
+} catch (MyUncheckedException e) {
+    //예외 처리 로직
+    log.info("error", e);
+}
+```
+
+- 언체크 예외도 필요한 경우 이렇게 잡아서 처리할 수 있습니다.
+
+**언체크 예외를 밖으로 던지는 코드 - 생략**
+
+```java
+public void callThrow() {
+    repository.call();
+}
+```
+
+- 언체크 예외는 체크 예외와 다르게 `throws 예외`를 선언하지 않아도 됩니다.
+- 말 그대로 컴파일러가 이런 부분을 체크하지 않기 때문에 언체크 예외인 것입니다.
+
+**언체크 예외를 밖으로 던지는 코드 - 선언**
+
+```java
+public void callThrow() throws MyUncheckedException {
+    repository.call();
+}
+```
+
+- 참고로 언체크 예외도 `throws 예외`를 선언해도 됩니다. 물론 생략할 수 있습니다.
+- 언체크 예외는 주로 생략하지만, 중요한 예외의 경우 이렇게 선언해두면 해당 코드를 호출하는 개발자가 이런 예외가 발생한다는 점을 IDE를 통해 좀 더 편리하게 인지할 수 있습니다. (컴파일 시점에 막을 수 있는 것은 아니고, IDE를 통해서 인지할 수 있는 정도)
+
+### **언체크 예외의 장단점**
+
+언체크 예외는 예외를 잡아서 처리할 수 없을 때, 예외를 밖으로 던지는 `throws 예외`를 생략할 수 있습니다. 이것 때문에 장점과 단점이 동시에 존재합니다.
+
+- 장점: 신경쓰고 싶지 않은 언체크 예외를 무시할 수 있습니다. 체크 예외의 경우 처리할 수 없는 예외를 밖으로 던지려면 항상 `throws 예외`를 선언해야 하지만, 언체크 예외는 이 부분을 생략할 수 있습니다. 신경쓰고 싶지 않은 예외의 의존관계를 참조하지 않아도 되는 장점이 있습니다.
+- 단점: 언체크 예외는 개발자가 실수로 예외를 누락할 수 있습니다. 반면에 체크 예외는 컴파일러를 통해 예외 누락을 잡아줍니다.
+
+### **정리**
+
+체크 예외와 언체크 예외의 차이는 예외를 처리할 수 없을 때 예외를 밖으로 던지는 부분에 있습니다. 이 부분을 필수로 선언해야 하는가 생략할 수 있는가의 차이가 있습니다.
