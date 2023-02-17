@@ -2683,3 +2683,175 @@ class MemberServiceV2Test {
 애플리케이션에서 DB 트랜잭션을 적용하려면 서비스 계층이 매우 지저분해지고, 생각보다 매우 복잡한 코드를 요구합니다. 추가로 커넥션을 유지하도록 코드를 변경하는 것도 쉬운 일은 아닙니다.
 
 늘 그랬듯이 다음 글에서 이 문제를 스프링을 통해서 해결하는 것을 알아봅시다.
+
+# ==== 4. 스프링과 트랜잭션 문제 해결 ====
+
+
+# 1. 트랜잭션 문제점
+
+### **애플리케이션 구조**
+
+여러가지 애플리케이션 구조가 있지만, 가장 단순하면서 많이 사용하는 방법은 역할에 따라 3가지 계층으로 나누는 것입니다.
+
+![https://user-images.githubusercontent.com/52024566/193834311-85946dbd-7992-40b1-987c-046f50fff23b.png](https://user-images.githubusercontent.com/52024566/193834311-85946dbd-7992-40b1-987c-046f50fff23b.png)
+
+- 프레젠테이션 계층
+    - UI와 관련된 처리 담당
+    - 웹 요청과 응답
+    - 사용자 요청을 검증
+    - 주 사용 기술: 서블릿과 HTTP 같은 웹 기술, 스프링 MVC
+
+- 서비스 계층
+    - 비즈니스 로직을 담당
+    - 주 사용 기술: 가급적 특정 기술에 의존하지 않고, 순수 자바 코드로 작성
+
+- 데이터 접근 계층
+    - 실제 데이터베이스에 접근하는 코드
+    - 주 사용 기술: JDBC, JPA, File, Redis, Mongo …
+
+### **순수한 서비스 계층**
+
+- 여기서 가장 중요한 곳은 바로 핵심 비즈니스 로직이 들어있는 서비스 계층입니다. 시간이 흘러서 UI(웹)와 관련된 부분이 변하고, 데이터 저장 기술을 다른 기술로 변경해도, 비즈니스 로직은 최대한 변경없이 유지되어야 합니다.
+- 이렇게 하려면 서비스 계층을 특정 기술에 종속적이지 않게 개발해야 합니다.
+
+애초에 이렇게 계층을 나눈 이유도 서비스 계층을 최대한 순수하게 유지하기 위한 목적이 대부분입니다. 기술에 종속적인 부분은 프레젠테이션 계층과 데이터 접근 계층에서 가지고 갑니다.
+
+**프레젠테이션 계층은 클라이언트가 접근하는 UI와 관련된 기술인 웹, 서블릿, HTTP와 관련된 부분을 담당**합니다. 그래서 서비스 계층을 이런 UI와 관련된 기술로부터 보호하는 것입니다. 
+예를 들어서 HTTP API를 사용하다가 GRPC 같은 기술로 변경해도 프레젠테이션 계층의 코드만 변경하고, 서비스 계층은 변경하지 않아도 됩니다.
+
+**데이터 접근 계층은 데이터를 저장하고 관리하는 기술을 담당**합니다. 그래서 JDBC, JPA와 같은 구체적인 데이터 접근 기술로부터 서비스 계층을 보호합니다. 
+예를 들어서 JDBC를 사용하다가 JPA로 변경해도 서비스 계층은 변경하지 않아도 됩니다. 물론 서비스 계층에서 데이터 접근 계층을 직접 접근하는 것이 아니라, 인터페이스를 제공하고 서비스 계층은 이 인터페이스에 의존하는 것이 좋습니다. 그래야 서비스 코드의 변경 없이 `JdbcRepository` 를 `JpaRepository` 로 변경할 수 있습니다.
+
+서비스 계층이 특정 기술에 종속되지 않기 때문에 비즈니스 로직을 유지보수 하기도 쉽고, 테스트 하기도 쉬워집니다.
+
+정리하자면 **서비스 계층은 가급적 비즈니스 로직만 구현**하고 **특정 구현 기술에 직접 의존해서는 안되는 것입니다**.
+
+이렇게 하면 **향후 구현 기술이 변경될 때 변경의 영향 범위를 최소화**할 수 있습니다.
+
+### **문제점들**
+
+이전에 만들었던 `MemberServiceV1` 코드를 살펴봅시다.
+
+`MemberServiceV1`
+
+```java
+import java.sql.SQLException;
+
+@RequiredArgsConstructor
+public class MemberServiceV1 {
+  
+    private final MemberRepositoryV1 memberRepository;
+  
+    public void accountTransfer(String fromId, String toId, int money) throws SQLException {
+        Member fromMember = memberRepository.findById(fromId);
+        Member toMember = memberRepository.findById(toId);
+        memberRepository.update(fromId, fromMember.getMoney() - money);
+        memberRepository.update(toId, toMember.getMoney() + money);
+    }
+}
+```
+
+`MemberServiceV1`은 특정 기술에 종속적이지 않고, 순수한 비즈니스 로직만 존재합니다.
+
+특정 기술과 관련된 코드가 거의 없어서 코드가 깔끔하고, 유지보수 하기 쉽습니다.
+
+만약 향후에 비즈니스 로직의 변경이 필요하면 이 부분을 변경하면 됩니다.
+
+**현재 남은 문제는 크게 두 가지 문제가 있습니다.**
+
+현재는 `SQLException`이라는 JDBC 기술에 의존하고 있습니다. 이 부분은 애초에 `memberRepository`에서 올라오는 예외이기 때문에 `memberRepository`에서 해결해야 합니다.
+
+`MemberRepositoryV1`이라는 구체 클래스에 직접 의존하고 있습니다. `MemberRepository` 인터페이스를 도입하면 향후 `MemberService`의 코드의 변경 없이 다른 Repository 구현 기술로 손쉽게 변경할 수 있습니다.
+
+그렇다면 두번째 버전으로 만들었던 `MemberServiceV2` 코드를 살펴봅시다.
+
+`MemberServiceV2`
+
+```java
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.SQLException;
+
+@Slf4j
+@RequiredArgsConstructor
+public class MemberServiceV2 {
+  
+    private final DataSource dataSource;
+    private final MemberRepositoryV2 memberRepository;
+  
+    public void accountTransfer(String fromId, String toId, int money) throws SQLException {
+        Connection con = dataSource.getConnection();
+        try {
+            con.setAutoCommit(false); //트랜잭션 시작
+            //비즈니스 로직
+            bizLogic(con, fromId, toId, money);
+            con.commit(); //성공시 커밋
+        } catch (Exception e) {
+            con.rollback(); //실패시 롤백
+            throw new IllegalStateException(e);
+        } finally {
+            release(con);
+        }
+    }
+  
+    private void bizLogic(Connection con, String fromId, String toId, int money) throws SQLException {
+        Member fromMember = memberRepository.findById(con, fromId);
+        Member toMember = memberRepository.findById(con, toId);
+      
+        memberRepository.update(con, fromId, fromMember.getMoney() - money);
+        memberRepository.update(con, toId, toMember.getMoney() + money);
+    }
+}
+```
+
+**트랜잭션은 비즈니스 로직이 있는 서비스 계층에서 시작하는 것이 좋습니다.**
+
+그런데 문제는 트랜잭션을 사용하기 위해서 `javax.sql.DataSource`, `java.sql.Connection`, `java.sql.SQLException` 같은 JDBC 기술에 의존해야 한다는 점입니다.
+
+트랜잭션을 사용하기 위해 JDBC 기술에 의존하기 때문에 결과적으로 비즈니스 로직보다 JDBC를 사용해서 트랜잭션을 처리하는 코드가 더 많습니다.
+
+향후 JDBC에서 JPA 같은 다른 기술로 바꾸어 사용하게 되면 서비스 코드도 모두 함께 변경해야 합니다. 
+
+(JPA는 트랜잭션을 사용하는 코드가 JDBC와 다름)
+
+핵심 비즈니스 로직과 JDBC 기술이 섞여 있어서 유지보수 하기 어렵습니다.
+
+### **문제 정리**
+
+**즉, 지금까지 개발한 애플리케이션의 문제점은 크게 3가지가 있습니다.**
+
+- 트랜잭션 문제
+- 예외 누수 문제
+- JDBC 반복 문제
+
+### **트랜잭션 문제**
+
+가장 큰 문제는 트랜잭션을 적용하면서 생긴 다음과 같은 문제들입니다.
+
+**JDBC 구현 기술이 서비스 계층에 누수되는 문제**
+
+- 트랜잭션을 적용하기 위해 JDBC 구현 기술이 서비스 계층에 누수되었습니다.
+- 서비스 계층은 순수해야 합니다. 구현 기술을 변경해도 서비스 계층 코드는 최대한 유지할 수 있어야 합니다 (변화에 대응)
+    - 그래서 데이터 접근 계층에 JDBC 코드를 다 몰아두어야 하는 것이지요
+    - 물론 데이터 접근 계층의 구현 기술이 변경될 수도 있으니 데이터 접근 계층은 인터페이스를 제공하는 것이 좋습니다.
+    - 서비스 계층은 특정 기술에 종속되지 않아야 합니다. 지금까지 그렇게 노력해서 데이터 접근 계층으로 JDBC 관련 코드를 모았는데, 트랜잭션을 적용하면서 결국 서비스 계층에 JDBC 구현 기술의 누수가 발생합니다.
+
+- 트랜잭션 동기화 문제
+    - 같은 트랜잭션을 유지하기 위해 커넥션을 파라미터로 넘겨야 합니다.
+    - 이때 파생되는 문제들도 있습니다. 똑같은 기능도 트랜잭션용 기능과 트랜잭션을 유지하지 않아도 되는 기능으로 분리해야 합니다.
+
+- 트랜잭션 적용 반복 문제
+    - 트랜잭션 적용 코드를 보면 줄일 수 있는 반복이 많습니다.. `try`, `catch`, `finally` …
+
+**예외 누수**
+
+- 데이터 접근 계층의 JDBC 구현 기술 예외가 서비스 계층으로 전파되었습니다.
+- `SQLException`은 체크 예외이기 때문에 데이터 접근 계층을 호출한 서비스 계층에서 해당 예외를 잡아서 처리하거나 명시적으로 `throws`를 통해서 다시 밖으로 던져야 합니다.
+- `SQLException`은 JDBC 전용 기술입니다. 향후 JPA나 다른 데이터 접근 기술을 사용하면, 그에 맞는 다른 예외로 변경해야 하고, 결국 서비스 코드도 수정해야 하는 문제가 있습니다.
+
+**JDBC 반복 문제**
+
+- 지금까지 작성한 `MemberRepository` 코드는 순수한 JDBC를 사용합니다.
+- 이 코드들은 유사한 코드의 반복이 너무 많습니다. 아래와 같이 말이죠
+    - `try`, `catch`, `finally` …
+    - 커넥션을 열고, `PreparedStatement`를 사용하고, 결과를 매핑하고… 실행하고, 커넥션과 리소스를 정리하는 코드
