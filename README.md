@@ -4146,3 +4146,28 @@ https://docs.spring.io/spring-boot/docs/current/reference/html/data.html#data.sq
 > 자세한 설정 속성은 다음을 참고합시다. 
 > https://docs.spring.io/spring-boot/docs/current/reference/html/applicationproperties.html
 >
+
+# === 5. 자바 예외 이해 ===
+
+# 1. 예외 계층
+
+### **예외 계층 그림**
+
+![https://user-images.githubusercontent.com/52024566/195851243-59d311da-a993-4a1c-a17f-f6a8adf8aff8.png](https://user-images.githubusercontent.com/52024566/195851243-59d311da-a993-4a1c-a17f-f6a8adf8aff8.png)
+
+- `Object`: 예외도 객체입니다. 모든 객체의 최상위 부모는 `Object`이므로 예외의 최상위 부모도 `Object` 입니다.
+- `Throwable`: 최상위 예외 타입입니다. 하위에 `Exception`과 `Error`가 있습니다.
+- `Error`: 메모리 부족이나 심각한 시스템 오류와 같이 애플리케이션에서 복구 불가능한 시스템 예외입니다. 애플리케이션 개발자는 이 예외를 잡으려고 해서는 안 되고 잡을 수도 없을 것입니다.
+    - 상위 예외를 `catch`로 잡으면 그 하위 예외까지 함께 잡습니다. 따라서 애플리케이션 로직에서는 `Throwable` 예외도 잡으면 안되는데, 앞서 이야기한 `Error` 예외도 함께 잡을 수 있기 때문입니다. 애플리케이션 로직은 이런 이유로 `Exception`부터 필요한 예외로 생각하고 잡으면 됩니다.
+    - 참고로 `Error`도 언체크 예외입니다.
+
+- `Exception`: 체크 예외
+    - 애플리케이션 로직에서 사용할 수 있는 실질적인 최상위 예외입니다.
+    - `Exception`과 그 하위 예외는 모두 컴파일러가 체크하는 체크 예외입니다. 단 `RuntimeException`은 컴파일러가 체크하는 예외가 아닙니다.
+
+- `RuntimeException`: 언체크 예외, 런타임 예외
+    - 컴파일러가 체크 하지 않는 언체크 예외입니다.
+    - `RuntimeException`과 그 자식 예외는 모두 언체크 예외입니다.
+    - `RuntimeException`의 이름을 따라서 `RuntimeException`과 그 하위 언체크 예외를 런타임 예외라고 합니다.
+
+    
