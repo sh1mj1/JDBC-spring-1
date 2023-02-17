@@ -4979,3 +4979,82 @@ void execute(String sql) throws DataAccessException;
 - 런타임 예외도 `throws`에 선언할 수 있습니다. 물론 생략해도 됩니다.
 - 던지는 예외가 명확하고 중요하다면, 코드에 어떤 예외를 던지는지 명시되어 있기 때문에 개발자가 IDE를 통해서 예외를 확인하기 편리합니다.
 - 물론 컨트롤러나 서비스에서 `DataAccessException`을 사용하지 않는다면 런타임 예외이기 때문에 무시해도 됩니다.
+
+# 7. 예외 포함과 스택 트레이스
+
+**예외를 전환할 때는 꼭 기존 예외를 포함해야 합니다.** 
+
+그렇지 않으면 스택 트레이스를 확인할 때 심각한 문제가 발생합니다.
+
+```java
+@Test
+void printEx() {
+    Controller controller = new Controller();
+    try {
+        controller.request();
+    } catch (Exception e) {
+        //e.printStackTrace();
+        log.info("ex", e);
+    }
+}
+```
+
+로그를 출력할 때 마지막 파라미터에 예외를 넣어주면 로그에 스택 트레이스를 출력할 수 있습니다.
+
+예) `log.info("message={}", "message", ex)` ←  여기에서 마지막에 `ex`를 전달하는 것을 확인할 수 있습니다. 이렇게 하면 스택 트레이스에 로그를 출력할 수 있습니다.
+
+예) `log.info("ex", ex)` 지금 예에서는 파라미터가 없기 때문에, 예외만 파라미터에 전달하면 스택 트레이스를 로그에 출력할 수 있습니다.
+
+`System.out`에 스택 트레이스를 출력하려면 `e.printStackTrace()`를 사용하면 됩니다.
+
+하지만 실무에서는 항상 로그를 사용해야 한다는 점을 기억합시다!
+
+**기존 예외를 포함하는 경우**
+
+```java
+public void call() {
+    try {
+        runSQL();
+    } catch (SQLException e) {
+        throw new RuntimeSQLException(e); //기존 예외(e) 포함
+    }
+}
+```
+
+```java
+13:10:45.626 [Test worker] INFO hello.jdbc.exception.UncheckedAppTest - ex
+hello.jdbc.exception.UncheckedAppTest$RuntimeSQLException:java.sql.SQLException: ex
+at hello.jdbc.exception.UncheckedAppTest$Repository.call(UncheckedAppTest.java:61)
+at hello.jdbc.exception.UncheckedAppTest$Service.logic(UncheckedAppTest.java:45)
+at hello.jdbc.exception.UncheckedAppTest$Controller.request(UncheckedAppTest.java:35)
+at hello.jdbc.exception.UncheckedAppTest.printEx(UncheckedAppTest.java:24) Caused by: java.sql.SQLException: ex
+at hello.jdbc.exception.UncheckedAppTest$Repository.runSQL(UncheckedAppTest.java:66)
+at hello.jdbc.exception.UncheckedAppTest$Repository.call(UncheckedAppTest.java:59)
+```
+
+예외를 포함해서 기존에 발생한 `java.sql.SQLException`과 스택 트레이스를 확인할 수 있습니다.
+
+**기존 예외를 포함하지 않는 경우**
+
+```java
+public void call() {
+    try {
+        runSQL();
+    } catch (SQLException e) {
+        throw new RuntimeSQLException(); //기존 예외(e) 제외
+    }
+}
+```
+
+```java
+[Test worker] INFO hello.jdbc.exception.UncheckedAppTest - ex
+hello.jdbc.exception.UncheckedAppTest$RuntimeSQLException: null
+at hello.jdbc.exception.UncheckedAppTest$Repository.call(UncheckedAppTest.java:61)
+at hello.jdbc.exception.UncheckedAppTest$Service.logic(UncheckedAppTest.java:45)
+```
+
+예외를 포함하지 않아서 기존에 발생한 `java.sql.SQLException`과 스택 트레이스를 확인할 수 없습니다. 
+
+변환한 `RuntimeSQLException`부터 예외를 확인할 수 있습니다. 
+
+만약 실제 DB에 연동했다면 DB에서 발생한 예외를 확인할 수 없는 심각한 문제가 발생합니다. 예외를 전환할 때는 꼭! 기존 예외를 포함합시다!!
