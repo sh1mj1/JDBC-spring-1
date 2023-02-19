@@ -5152,3 +5152,405 @@ public class MemberRepositoryV3 implements MemberRepositoryEx {
 
 런타임 예외는 이런 부분에서 자유롭습니다. 인터페이스에 런타임 예외를 따로 선언하지 않아도 되므로 인터페이스가 특정 기술에 종속적일 필요가 없습니다.
 
+
+# 2. 런타임 예외 적용
+
+`MemberRepository` 인터페이스
+
+```java
+package hello.jdbc.repository;
+
+import hello.jdbc.domain.Member;
+
+public interface MemberRepository {
+    Member save(Member member);
+
+    Member findById(String memberId);
+
+    void update(String memberId, int money);
+
+    void delete(String memberId);
+}
+```
+
+`MyDbException` 런타임 예외
+
+```java
+package hello.jdbc.exception;
+
+public class MyDbException extends RuntimeException {
+    public MyDbException() {
+    }
+
+    public MyDbException(String message) {
+        super(message);
+    }
+
+    public MyDbException(String message, Throwable cause) {
+        super(message, cause);
+    }
+
+    public MyDbException(Throwable cause) {
+        super(cause);
+    }
+}
+```
+
+- `RuntimeException`을 상속받았으므로 `MyDbException`은 런타임(언체크) 예외가 됩니다.
+
+`MemberRepositoryV4_1`
+
+```java
+package hello.jdbc.repository;
+
+import hello.jdbc.domain.Member;
+import hello.jdbc.exception.MyDbException;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.datasource.DataSourceUtils;
+import org.springframework.jdbc.support.JdbcUtils;
+
+import javax.sql.DataSource;
+import java.sql.*;
+import java.util.NoSuchElementException;
+
+/**
+ * 예외 누수 문제 해결
+ * 체크 예외를 런타임 예외로 변경
+ * MemberRepository 인터페이스 사용
+ * throws SQLException 제거
+ */
+@Slf4j
+public class MemberRepositoryV4_1 implements MemberRepository {
+    private final DataSource dataSource;
+
+    public MemberRepositoryV4_1(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    @Override
+    public Member save(Member member) {
+        String sql = "insert into member(member_id, money) values(?, ?)";
+        Connection con = null;
+        PreparedStatement pstmt = null;
+
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(sql);
+            pstmt.setString(1, member.getMemberId());
+            pstmt.setInt(2, member.getMoney());
+            pstmt.executeUpdate();
+            return member;
+        } catch (SQLException e) {
+            throw new MyDbException(e);
+        } finally {
+            close(con, pstmt, null);
+        }
+    }
+
+    @Override
+    public Member findById(String memberId) {
+        String sql = "select * from member where member_id=?";
+        Connection con = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(sql);
+            pstmt.setString(1, memberId);
+            rs = pstmt.executeQuery();
+            if (rs.next()) {
+                Member member = new Member();
+                member.setMemberId(rs.getString("member_id"));
+                member.setMoney(rs.getInt("money"));
+                return member;
+            } else {
+                throw new NoSuchElementException("member not found memberId=" + memberId);
+            }
+        } catch (SQLException e) {
+            throw new MyDbException(e);
+        } finally {
+            close(con, pstmt, rs);
+        }
+    }
+
+    @Override
+    public void update(String memberId, int money) {
+
+        String sql = "update member set money=? where member_id=?";
+
+        Connection con = null;
+        PreparedStatement pstmt = null;
+
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(sql);
+            pstmt.setInt(1, money);
+            pstmt.setString(2, memberId);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new MyDbException(e);
+        } finally {
+            close(con, pstmt, null);
+        }
+    }
+
+    @Override
+    public void delete(String memberId) {
+        String sql = "delete from member where member_id=?";
+
+        Connection con = null;
+        PreparedStatement pstmt = null;
+
+        try {
+            con = getConnection();
+            pstmt = con.prepareStatement(sql);
+            pstmt.setString(1, memberId);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new MyDbException(e);
+        } finally {
+            close(con, pstmt, null);
+        }
+    }
+
+    private void close(Connection con, Statement stmt, ResultSet rs) {
+        JdbcUtils.closeResultSet(rs);
+        JdbcUtils.closeStatement(stmt);
+        DataSourceUtils.releaseConnection(con, dataSource);
+    }
+
+    private Connection getConnection() {
+        Connection con = DataSourceUtils.getConnection(dataSource);
+        log.info("get connection={} class={}", con, con.getClass());
+        return con;
+    }
+}
+```
+
+`MemberRepository` 인터페이스를 구현합니다.
+
+이 코드에서 핵심은 `SQLException`이라는 체크 예외를 `MyDbException`이라는 런타임 예외로 변환해서 던지는 부분입니다.
+
+**예외 변환**
+
+```java
+catch (SQLException e) {
+    throw new MyDbException(e);
+}
+```
+
+잘 보면 기존 예외를 생성자를 통해서 포함하고 있는 것을 확인할 수 있습니다. 
+
+예외는 원인이 되는 예외를 내부에 포함할 수 있는데, 꼭 이렇게 작성해야 합니다. 그래야 예외를 출력했을 때 원인이 되는 기존 예외도 함께 확인할 수 있습니다.
+
+- `MyDbException`이 내부에 `SQLException`을 포함하고 있다고 이해하면 됩니다. 예외를 출력했을 때 스택 트레이스를 통해 둘 다 확인할 수 있습니다.
+
+**그런데 아래처럼 같이 기존 예외를 무시하고 작성하면 절대 안 됩니다!**
+
+**예외 변환 - 기존 예외 무시**
+
+```java
+catch (SQLException e) {
+    throw new MyDbException();
+}
+```
+
+잘 보면 `new MyDbException()`으로 해당 예외만 생성하고 기존에 있는 `SQLException`은 포함하지 않고 무시하고 있습니다. (파라미터로 e 을 넣어주지 않음)
+
+따라서 `MyDbException`은 내부에 원인이 되는 다른 예외를 포함하지 않습니다.
+
+이렇게 원인이 되는 예외를 내부에 포함하지 않으면, 예외를 스택 트레이스를 통해 출력했을 때 기존에 원인이 되는 부분을 확인할 수 없습니다. 만약 `SQLException`에서 문법 오류가 발생했다면 그 부분을 확인할 방법이 없습니다.
+
+> 주의 - 예외를 변환할 때는 기존 예외를 꼭! 포함합시다. 장애가 발생하고 로그에서 진짜 원인이 남지 않는 심각한문제가 발생할 수 있습니다. 중요한 내용이어서 한번 더 설명했습니다.
+> 
+
+`MemberServiceV4`
+
+```java
+import hello.jdbc.domain.Member;
+import hello.jdbc.repository.MemberRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+* 예외 누수 문제 해결
+* SQLException 제거
+*
+* MemberRepository 인터페이스 의존
+*/
+@Slf4j
+@RequiredArgsConstructor
+public class MemberServiceV4 {
+  
+    private final MemberRepository memberRepository;
+  
+    @Transactional
+    public void accountTransfer(String fromId, String toId, int money) {
+        bizLogic(fromId, toId, money);
+    }
+  
+    private void bizLogic(String fromId, String toId, int money) {
+        Member fromMember = memberRepository.findById(fromId);
+        Member toMember = memberRepository.findById(toId);
+      
+        memberRepository.update(fromId, fromMember.getMoney() - money);
+        validation(toMember);
+        memberRepository.update(toId, toMember.getMoney() + money);
+    }
+  
+    private void validation(Member toMember) {
+        if (toMember.getMemberId().equals("ex")) {
+            throw new IllegalStateException("이체중 예외 발생");
+        }
+    }
+}
+```
+
+`MemberRepository` 인터페이스에 의존하도록 코드를 변경하였습니다.
+
+`MemberServiceV3_3`와 코드를 비교해서 보면 메서드에서 `throws SQLException` 부분이 제거된 것을 확인할 수 있습니다.
+
+순수한 서비스를 완성했습니다.
+
+`MemberServiceV4Test`
+
+```java
+import hello.jdbc.domain.Member;
+import hello.jdbc.repository.MemberRepository;
+import hello.jdbc.repository.MemberRepositoryV4_1;
+import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.aop.support.AopUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.transaction.PlatformTransactionManager;
+
+import javax.sql.DataSource;
+import java.sql.SQLException;
+
+import static hello.jdbc.connection.ConnectionConst.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+* 예외 누수 문제 해결
+* SQLException 제거
+*
+* MemberRepository 인터페이스 의존
+*/
+@SpringBootTest
+class MemberServiceV4Test {
+  
+    public static final String MEMBER_A = "memberA";
+    public static final String MEMBER_B = "memberB";
+    public static final String MEMBER_EX = "ex";
+  
+    @Autowired
+    MemberRepository memberRepository;
+    @Autowired
+    MemberServiceV4 memberService;
+  
+    @AfterEach
+    void after() throws SQLException {
+        memberRepository.delete(MEMBER_A);
+        memberRepository.delete(MEMBER_B);
+        memberRepository.delete(MEMBER_EX);
+    }
+  
+    @TestConfiguration
+    static class TestConfig {
+      
+    private final DataSource dataSource;
+      
+        public TestConfig(DataSource dataSource) {
+            this.dataSource = dataSource;
+        }
+      
+        @Bean
+        MemberRepository memberRepository() {
+            return new MemberRepositoryV4_1(dataSource); //단순 예외 변환
+        }
+      
+        @Bean
+        MemberServiceV4 memberServiceV4() {
+            return new MemberServiceV4(memberRepository());
+        }
+    }
+  
+    @Test
+    void AopCheck() {
+        log.info("memberService class={}", memberService.getClass());
+        log.info("memberRepository class={}", memberRepository.getClass());
+        Assertions.assertThat(AopUtils.isAopProxy(memberService)).isTrue();
+        Assertions.assertThat(AopUtils.isAopProxy(memberRepository)).isFalse();
+    }
+    @Test
+    @DisplayName("정상 이체")
+    void accountTransfer() throws SQLException {
+        //given
+        Member memberA = new Member(MEMBER_A, 10000);
+        Member memberB = new Member(MEMBER_B, 10000);
+        memberRepository.save(memberA);
+        memberRepository.save(memberB);
+      
+        //when
+        memberService.accountTransfer(memberA.getMemberId(), memberB.getMemberId(), 2000);
+      
+        //then
+        Member findMemberA = memberRepository.findById(memberA.getMemberId());
+        Member findMemberB = memberRepository.findById(memberB.getMemberId());
+        assertThat(findMemberA.getMoney()).isEqualTo(8000);
+        assertThat(findMemberB.getMoney()).isEqualTo(12000);
+    }
+  
+    @Test
+    @DisplayName("이체중 예외 발생")
+    void accountTransferEx() throws SQLException {
+        //given
+        Member memberA = new Member(MEMBER_A, 10000);
+        Member memberEx = new Member(MEMBER_EX, 10000);
+        memberRepository.save(memberA);
+        memberRepository.save(memberEx);
+      
+        //when
+        assertThatThrownBy(() -> memberService.accountTransfer(memberA.getMemberId(), memberEx.getMemberId(),
+        2000)) 
+          .isInstanceOf(IllegalStateException.class);
+      
+        //then
+        Member findMemberA = memberRepository.findById(memberA.getMemberId());
+        Member findMemberEx =
+        memberRepository.findById(memberEx.getMemberId());
+      
+        //memberA의 돈이 롤백 되어야함
+        assertThat(findMemberA.getMoney()).isEqualTo(10000);
+        assertThat(findMemberEx.getMoney()).isEqualTo(10000);
+    }
+}
+```
+
+`MemberRepository` 인터페이스를 사용합니다.
+
+테스트가 모두 정상 동작하는 것을 확인할 수 있습니다.
+
+### **정리**
+
+체크 예외를 런타임 예외로 변환하면서 인터페이스와 서비스 계층의 순수성을 유지할 수 있습니다.
+
+덕분에 향후 JDBC에서 다른 구현 기술로 변경하더라도 서비스 계층의 코드를 변경하지 않고 유지할 수 있습니다.
+
+### **남은 문제**
+
+리포지토리에서 넘어오는 특정한 예외의 경우 복구를 시도할 수도 있습니다. 
+
+그런데 지금 방식은 항상 `MyDbException`이라는 예외만 넘어오기 때문에 예외를 구분할 수 없는 단점이 있습니다. 
+
+만약 특정 상황에는 예외를 잡아서 복구하고 싶으면 어떻게 해야 할까요? 예외를 직접 만들면 됩니다. 이것은 다음 챕터에서 구체적으로 설명하겠습니다.
